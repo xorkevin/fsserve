@@ -57,6 +57,7 @@ func initConfig() {
 	} else {
 		viper.SetConfigName(".fsserve")
 		viper.AddConfigPath(".")
+		viper.AddConfigPath("config")
 
 		// Search config in XDG_CONFIG_HOME directory with name ".fsserve" (without extension).
 		if cfgdir, err := os.UserConfigDir(); err == nil {
