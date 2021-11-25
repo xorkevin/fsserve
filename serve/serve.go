@@ -154,6 +154,7 @@ func NewServer(base string, routes []Route) (*Server, error) {
 		for _, j := range k.Compressed {
 			if j.regex == nil {
 				if j.Test == "" {
+					log.Printf("compressed %s: %s\n", j.Code, j.Suffix)
 					continue
 				}
 				r, err := regexp.Compile(j.Test)
@@ -161,6 +162,7 @@ func NewServer(base string, routes []Route) (*Server, error) {
 					return nil, fmt.Errorf("Invalid compressed test regex %s: %w", j.Test, err)
 				}
 				j.regex = r
+				log.Printf("compressed %s %s: %s\n", j.Code, r.String(), j.Suffix)
 			}
 		}
 		if k.Dir {
