@@ -4,24 +4,36 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"os/signal"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type (
+	Compressed struct {
+		Code   string `mapstructure:"code"`
+		Test   string `mapstructure:"test"`
+		Suffix string `mapstructure:"suffix"`
+		regex  *regexp.Regexp
+	}
+
 	Route struct {
-		Prefix       string   `mapstructure:"prefix"`
-		Dir          bool     `mapstructure:"dir"`
-		Path         string   `mapstructure:"path"`
-		CacheControl []string `mapstructure:"cachecontrol"`
-		ETag         bool     `mapstructure:"etag"`
+		Prefix       string       `mapstructure:"prefix"`
+		Dir          bool         `mapstructure:"dir"`
+		Path         string       `mapstructure:"path"`
+		CacheControl []string     `mapstructure:"cachecontrol"`
+		ETag         bool         `mapstructure:"etag"`
+		Compressed   []Compressed `mapstructure:"compressed"`
 	}
 
 	Server struct {
@@ -39,8 +51,10 @@ type (
 )
 
 const (
-	ccHeader   = "Cache-Control"
-	etagHeader = "ETag"
+	ccHeader              = "Cache-Control"
+	etagHeader            = "ETag"
+	acceptEncodingHeader  = "Accept-Encoding"
+	contentEncodingHeader = "Content-Encoding"
 )
 
 func writeError(w http.ResponseWriter, code int) {
@@ -61,18 +75,74 @@ func handleFSError(w http.ResponseWriter, err error, path string) {
 	writeError(w, http.StatusInternalServerError)
 }
 
-func writeCacheHeaders(headers http.Header, fsys fs.FS, path string, cachecontrol []string, etag bool) error {
+func writeCacheHeaders(w http.ResponseWriter, fsys fs.FS, path string, cachecontrol []string, etag bool) error {
 	for _, j := range cachecontrol {
-		headers.Add(ccHeader, j)
+		w.Header().Add(ccHeader, j)
 	}
 	if etag {
 		stat, err := fs.Stat(fsys, path)
 		if err != nil {
 			return err
 		}
-		headers.Set(etagHeader, fmt.Sprintf(`W/"%x-%x"`, stat.ModTime().Unix(), stat.Size()))
+		w.Header().Set(etagHeader, fmt.Sprintf(`W/"%x-%x"`, stat.ModTime().Unix(), stat.Size()))
 	}
 	return nil
+}
+
+const (
+	sniffLen = 512
+)
+
+func readFileBuf(fsys fs.FS, name string, buf []byte) (int, error) {
+	f, err := fsys.Open(name)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			log.Printf("500 Error closing file %s: %v\n", name, err)
+		}
+	}()
+	n, _ := io.ReadFull(f, buf)
+	return n, nil
+}
+
+func detectContentType(w http.ResponseWriter, fsys fs.FS, name string) error {
+	if w.Header().Get("Content-Type") != "" {
+		return nil
+	}
+	ctype := mime.TypeByExtension(filepath.Ext(name))
+	if ctype == "" {
+		var buf [sniffLen]byte
+		n, err := readFileBuf(fsys, name, buf[:])
+		if err != nil {
+			return err
+		}
+		ctype = http.DetectContentType(buf[:n])
+	}
+	w.Header().Set("Content-Type", ctype)
+	return nil
+}
+
+func detectCompression(w http.ResponseWriter, r *http.Request, fsys fs.FS, origPath string, compressed []Compressed) (string, error) {
+	encodingsSet := map[string]struct{}{}
+	for _, c := range strings.Split(r.Header.Get(acceptEncodingHeader), ",") {
+		encodingsSet[strings.TrimSpace(strings.Split(c, ";")[0])] = struct{}{}
+	}
+	for _, j := range compressed {
+		_, ok := encodingsSet[j.Code]
+		if !ok || (j.regex != nil && !j.regex.Match([]byte(origPath))) {
+			continue
+		}
+		// need to detect content type on original path since mime.TypeByExtension
+		// and http.DetectContentType does not handle .gz, .br, etc.
+		if err := detectContentType(w, fsys, origPath); err != nil {
+			return "", err
+		}
+		w.Header().Set(contentEncodingHeader, j.Code)
+		return origPath + j.Suffix, nil
+	}
+	return origPath, nil
 }
 
 func NewServer(base string, routes []Route) (*Server, error) {
@@ -81,6 +151,18 @@ func NewServer(base string, routes []Route) (*Server, error) {
 	for _, i := range routes {
 		k := i
 		log.Printf("handle %s: %s\n", k.Prefix, k.Path)
+		for _, j := range k.Compressed {
+			if j.regex == nil {
+				if j.Test == "" {
+					continue
+				}
+				r, err := regexp.Compile(j.Test)
+				if err != nil {
+					return nil, fmt.Errorf("Invalid compressed test regex %s: %w", j.Test, err)
+				}
+				j.regex = r
+			}
+		}
 		if k.Dir {
 			fsys, err := fs.Sub(rootSys, k.Path)
 			if err != nil {
@@ -88,20 +170,30 @@ func NewServer(base string, routes []Route) (*Server, error) {
 			}
 			dir := http.FileServer(http.FS(fsys))
 			mux.Handle(k.Prefix, http.StripPrefix(k.Prefix, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				p := r.URL.Path
-				if err := writeCacheHeaders(w.Header(), fsys, p, k.CacheControl, k.ETag); err != nil {
-					handleFSError(w, err, path.Join(k.Prefix, p))
+				if err := writeCacheHeaders(w, fsys, r.URL.Path, k.CacheControl, k.ETag); err != nil {
+					handleFSError(w, err, path.Join(k.Prefix, r.URL.Path))
 					return
 				}
+				p, err := detectCompression(w, r, fsys, r.URL.Path, k.Compressed)
+				if err != nil {
+					handleFSError(w, err, path.Join(k.Prefix, r.URL.Path))
+					return
+				}
+				r.URL.Path = p
 				dir.ServeHTTP(w, r)
 			})))
 		} else {
 			mux.Handle(k.Prefix, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if err := writeCacheHeaders(w.Header(), rootSys, k.Path, k.CacheControl, k.ETag); err != nil {
+				if err := writeCacheHeaders(w, rootSys, k.Path, k.CacheControl, k.ETag); err != nil {
 					handleFSError(w, err, k.Prefix)
 					return
 				}
-				http.ServeFile(w, r, filepath.Join(base, k.Path))
+				p, err := detectCompression(w, r, rootSys, k.Path, k.Compressed)
+				if err != nil {
+					handleFSError(w, err, k.Prefix)
+					return
+				}
+				http.ServeFile(w, r, filepath.Join(base, p))
 			}))
 		}
 	}
