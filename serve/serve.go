@@ -28,12 +28,12 @@ type (
 	}
 
 	Route struct {
-		Prefix       string       `mapstructure:"prefix"`
-		Dir          bool         `mapstructure:"dir"`
-		Path         string       `mapstructure:"path"`
-		CacheControl []string     `mapstructure:"cachecontrol"`
-		ETag         bool         `mapstructure:"etag"`
-		Compressed   []Compressed `mapstructure:"compressed"`
+		Prefix       string        `mapstructure:"prefix"`
+		Dir          bool          `mapstructure:"dir"`
+		Path         string        `mapstructure:"path"`
+		CacheControl []string      `mapstructure:"cachecontrol"`
+		ETag         bool          `mapstructure:"etag"`
+		Compressed   []*Compressed `mapstructure:"compressed"`
 	}
 
 	Server struct {
@@ -124,7 +124,7 @@ func detectContentType(w http.ResponseWriter, fsys fs.FS, name string) error {
 	return nil
 }
 
-func detectCompression(w http.ResponseWriter, r *http.Request, fsys fs.FS, origPath string, compressed []Compressed) (string, error) {
+func detectCompression(w http.ResponseWriter, r *http.Request, fsys fs.FS, origPath string, compressed []*Compressed) (string, error) {
 	encodingsSet := map[string]struct{}{}
 	for _, c := range strings.Split(r.Header.Get(acceptEncodingHeader), ",") {
 		encodingsSet[strings.TrimSpace(strings.Split(c, ";")[0])] = struct{}{}
@@ -145,7 +145,7 @@ func detectCompression(w http.ResponseWriter, r *http.Request, fsys fs.FS, origP
 	return origPath, nil
 }
 
-func NewServer(base string, routes []Route) (*Server, error) {
+func NewServer(base string, routes []*Route) (*Server, error) {
 	rootSys := os.DirFS(base)
 	mux := http.NewServeMux()
 	for _, i := range routes {

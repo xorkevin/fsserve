@@ -25,7 +25,7 @@ var serveCmd = &cobra.Command{
 	Short: "Serves a local file system with an http server",
 	Long:  `Serves a local file system with an http server`,
 	Run: func(cmd *cobra.Command, args []string) {
-		var routes []serve.Route
+		var routes []*serve.Route
 		if err := viper.UnmarshalKey("routes", &routes); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
