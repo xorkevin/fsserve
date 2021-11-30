@@ -1,0 +1,32 @@
+## fsserve completion
+
+generate the autocompletion script for the specified shell
+
+### Synopsis
+
+
+Generate the autocompletion script for fsserve for the specified shell.
+See each sub-command's help for details on how to use the generated script.
+
+
+### Options
+
+```
+  -h, --help   help for completion
+```
+
+### Options inherited from parent commands
+
+```
+      --config string   config file (default is $XDG_CONFIG_HOME/.fsserve.yaml)
+      --debug           turn on debug output
+```
+
+### SEE ALSO
+
+* [fsserve](fsserve.md)	 - A file system http server
+* [fsserve completion bash](fsserve_completion_bash.md)	 - generate the autocompletion script for bash
+* [fsserve completion fish](fsserve_completion_fish.md)	 - generate the autocompletion script for fish
+* [fsserve completion powershell](fsserve_completion_powershell.md)	 - generate the autocompletion script for powershell
+* [fsserve completion zsh](fsserve_completion_zsh.md)	 - generate the autocompletion script for zsh
+

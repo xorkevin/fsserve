@@ -1,0 +1,45 @@
+.nh
+.TH "fsserve" "1" "Nov 2021" "" ""
+
+.SH NAME
+.PP
+fsserve\-serve \- Serves a local file system with an http server
+
+
+.SH SYNOPSIS
+.PP
+\fBfsserve serve [flags]\fP
+
+
+.SH DESCRIPTION
+.PP
+Serves a local file system with an http server
+
+
+.SH OPTIONS
+.PP
+\fB\-b\fP, \fB\-\-base\fP="."
+	static files base
+
+.PP
+\fB\-h\fP, \fB\-\-help\fP[=false]
+	help for serve
+
+.PP
+\fB\-p\fP, \fB\-\-port\fP=8080
+	port to run the http server on
+
+
+.SH OPTIONS INHERITED FROM PARENT COMMANDS
+.PP
+\fB\-\-config\fP=""
+	config file (default is $XDG\_CONFIG\_HOME/.fsserve.yaml)
+
+.PP
+\fB\-\-debug\fP[=false]
+	turn on debug output
+
+
+.SH SEE ALSO
+.PP
+\fBfsserve(1)\fP
