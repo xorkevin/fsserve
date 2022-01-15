@@ -221,7 +221,7 @@ func (s *Server) Serve(ctx context.Context, port int, opts Opts) {
 			log.Printf("Shutting down server: %v\n", err)
 		}
 	}()
-	log.Println("HTTP server listening on :3000")
+	log.Println("HTTP server listening on " + srv.Addr)
 	s.waitForInterrupt(ctx)
 	cancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, opts.GracefulShutdown)
