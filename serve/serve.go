@@ -51,10 +51,12 @@ type (
 )
 
 const (
-	ccHeader              = "Cache-Control"
-	etagHeader            = "ETag"
-	acceptEncodingHeader  = "Accept-Encoding"
-	contentEncodingHeader = "Content-Encoding"
+	headerAcceptEncoding  = "Accept-Encoding"
+	headerCacheControl    = "Cache-Control"
+	headerContentEncoding = "Content-Encoding"
+	headerContentType     = "Content-Type"
+	headerETag            = "ETag"
+	headerVary            = "Vary"
 )
 
 func writeError(w http.ResponseWriter, code int) {
@@ -77,14 +79,14 @@ func handleFSError(w http.ResponseWriter, err error, path string) {
 
 func writeCacheHeaders(w http.ResponseWriter, fsys fs.FS, path string, cachecontrol []string, etag bool) error {
 	for _, j := range cachecontrol {
-		w.Header().Add(ccHeader, j)
+		w.Header().Add(headerCacheControl, j)
 	}
 	if etag {
 		stat, err := fs.Stat(fsys, path)
 		if err != nil {
 			return err
 		}
-		w.Header().Set(etagHeader, fmt.Sprintf(`W/"%x-%x"`, stat.ModTime().Unix(), stat.Size()))
+		w.Header().Set(headerETag, fmt.Sprintf(`W/"%x-%x"`, stat.ModTime().Unix(), stat.Size()))
 	}
 	return nil
 }
@@ -108,7 +110,7 @@ func readFileBuf(fsys fs.FS, name string, buf []byte) (int, error) {
 }
 
 func detectContentType(w http.ResponseWriter, fsys fs.FS, name string) error {
-	if w.Header().Get("Content-Type") != "" {
+	if w.Header().Get(headerContentType) != "" {
 		return nil
 	}
 	ctype := mime.TypeByExtension(filepath.Ext(name))
@@ -120,18 +122,18 @@ func detectContentType(w http.ResponseWriter, fsys fs.FS, name string) error {
 		}
 		ctype = http.DetectContentType(buf[:n])
 	}
-	w.Header().Set("Content-Type", ctype)
+	w.Header().Set(headerContentType, ctype)
 	return nil
 }
 
 func detectCompression(w http.ResponseWriter, r *http.Request, fsys fs.FS, origPath string, compressed []*Compressed) (string, error) {
 	encodingsSet := map[string]struct{}{}
-	for _, c := range strings.Split(r.Header.Get(acceptEncodingHeader), ",") {
+	for _, c := range strings.Split(r.Header.Get(headerAcceptEncoding), ",") {
 		encodingsSet[strings.TrimSpace(strings.Split(c, ";")[0])] = struct{}{}
 	}
 	for _, j := range compressed {
 		_, ok := encodingsSet[j.Code]
-		if !ok || (j.regex != nil && !j.regex.Match([]byte(origPath))) {
+		if !ok || (j.regex != nil && !j.regex.MatchString(origPath)) {
 			continue
 		}
 		// need to detect content type on original path since mime.TypeByExtension
@@ -139,7 +141,8 @@ func detectCompression(w http.ResponseWriter, r *http.Request, fsys fs.FS, origP
 		if err := detectContentType(w, fsys, origPath); err != nil {
 			return "", err
 		}
-		w.Header().Set(contentEncodingHeader, j.Code)
+		w.Header().Set(headerContentEncoding, j.Code)
+		w.Header().Add(headerVary, headerContentEncoding)
 		return origPath + j.Suffix, nil
 	}
 	return origPath, nil
