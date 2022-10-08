@@ -20,6 +20,23 @@ import (
 )
 
 type (
+	MimeType struct {
+		Ext         string `mapstructure:"ext"`
+		ContentType string `mapstructure:"contenttype"`
+	}
+)
+
+func AddMimeTypes(mimeTypes []MimeType) error {
+	for _, i := range mimeTypes {
+		if err := mime.AddExtensionType(i.Ext, i.ContentType); err != nil {
+			return fmt.Errorf("Failed to add mime type %s %s: %w", i.Ext, i.ContentType, err)
+		}
+		log.Printf("Added mime type %s %s\n", i.Ext, i.ContentType)
+	}
+	return nil
+}
+
+type (
 	Compressed struct {
 		Code   string `mapstructure:"code"`
 		Test   string `mapstructure:"test"`

@@ -25,6 +25,15 @@ var serveCmd = &cobra.Command{
 	Short: "Serves a local file system with an http server",
 	Long:  `Serves a local file system with an http server`,
 	Run: func(cmd *cobra.Command, args []string) {
+		var mimeTypes []serve.MimeType
+		if err := viper.UnmarshalKey("exttotype", &mimeTypes); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if err := serve.AddMimeTypes(mimeTypes); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		var routes []*serve.Route
 		if err := viper.UnmarshalKey("routes", &routes); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -53,7 +62,8 @@ func init() {
 	serveCmd.PersistentFlags().IntVarP(&servePort, "port", "p", 8080, "port to run the http server on")
 	serveCmd.PersistentFlags().StringVarP(&serveBase, "base", "b", ".", "static files base")
 
-	viper.SetDefault("routes", []serve.Route{})
+	viper.SetDefault("exttotype", []serve.MimeType{})
+	viper.SetDefault("routes", []*serve.Route{})
 	viper.SetDefault("maxheadersize", "1M")
 	viper.SetDefault("maxconnread", "5s")
 	viper.SetDefault("maxconnheader", "2s")
