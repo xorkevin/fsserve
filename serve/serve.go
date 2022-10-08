@@ -128,8 +128,12 @@ func detectContentType(w http.ResponseWriter, fsys fs.FS, name string) error {
 
 func detectCompression(w http.ResponseWriter, r *http.Request, fsys fs.FS, origPath string, compressed []*Compressed) (string, error) {
 	encodingsSet := map[string]struct{}{}
-	for _, c := range strings.Split(r.Header.Get(headerAcceptEncoding), ",") {
-		encodingsSet[strings.TrimSpace(strings.Split(c, ";")[0])] = struct{}{}
+	if accept := strings.TrimSpace(r.Header.Get(headerAcceptEncoding)); accept != "" {
+		for _, directive := range strings.Split(accept, ",") {
+			enc, _, _ := strings.Cut(directive, ";")
+			enc = strings.TrimSpace(enc)
+			encodingsSet[enc] = struct{}{}
+		}
 	}
 	for _, j := range compressed {
 		_, ok := encodingsSet[j.Code]
