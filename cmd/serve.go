@@ -2,9 +2,7 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"log"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -15,53 +13,23 @@ import (
 	"xorkevin.dev/fsserve/serve"
 )
 
-var (
-	servePort int
-	serveBase string
+type (
+	serveFlags struct {
+		port int
+		base string
+	}
 )
 
-var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Serves a local file system with an http server",
-	Long:  `Serves a local file system with an http server`,
-	Run: func(cmd *cobra.Command, args []string) {
-		var mimeTypes []serve.MimeType
-		if err := viper.UnmarshalKey("exttotype", &mimeTypes); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		if err := serve.AddMimeTypes(mimeTypes); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		var routes []*serve.Route
-		if err := viper.UnmarshalKey("routes", &routes); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		s, err := serve.NewServer(serveBase, routes)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		s.Serve(context.Background(), servePort, serve.Opts{
-			ReadTimeout:       readDurationConfig(viper.GetString("maxconnread"), seconds5),
-			ReadHeaderTimeout: readDurationConfig(viper.GetString("maxconnheader"), seconds2),
-			WriteTimeout:      readDurationConfig(viper.GetString("maxconnwrite"), seconds5),
-			IdleTimeout:       readDurationConfig(viper.GetString("maxconnidle"), seconds5),
-			MaxHeaderBytes:    readBytesConfig(viper.GetString("maxheadersize"), MEGABYTE),
-			GracefulShutdown:  readDurationConfig(viper.GetString("gracefulshutdown"), seconds5),
-		})
-	},
-	DisableAutoGenTag: true,
-}
-
-func init() {
-	rootCmd.AddCommand(serveCmd)
-
-	serveCmd.PersistentFlags().IntVarP(&servePort, "port", "p", 8080, "port to run the http server on")
-	serveCmd.PersistentFlags().StringVarP(&serveBase, "base", "b", ".", "static files base")
-
+func (c *Cmd) getServeCmd() *cobra.Command {
+	serveCmd := &cobra.Command{
+		Use:               "serve",
+		Short:             "Serves a local file system with an http server",
+		Long:              `Serves a local file system with an http server`,
+		Run:               c.execServe,
+		DisableAutoGenTag: true,
+	}
+	serveCmd.PersistentFlags().IntVarP(&c.serveFlags.port, "port", "p", 8080, "port to run the http server on")
+	serveCmd.PersistentFlags().StringVarP(&c.serveFlags.base, "base", "b", ".", "static files base")
 	viper.SetDefault("exttotype", []serve.MimeType{})
 	viper.SetDefault("routes", []*serve.Route{})
 	viper.SetDefault("maxheadersize", "1M")
@@ -70,6 +38,33 @@ func init() {
 	viper.SetDefault("maxconnwrite", "5s")
 	viper.SetDefault("maxconnidle", "5s")
 	viper.SetDefault("gracefulshutdown", "5s")
+	return serveCmd
+}
+
+func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
+	var mimeTypes []serve.MimeType
+	if err := viper.UnmarshalKey("exttotype", &mimeTypes); err != nil {
+		log.Fatalln(err)
+	}
+	if err := serve.AddMimeTypes(mimeTypes); err != nil {
+		log.Fatalln(err)
+	}
+	var routes []*serve.Route
+	if err := viper.UnmarshalKey("routes", &routes); err != nil {
+		log.Fatalln(err)
+	}
+	s, err := serve.NewServer(c.serveFlags.base, routes)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	s.Serve(context.Background(), c.serveFlags.port, serve.Opts{
+		ReadTimeout:       readDurationConfig(viper.GetString("maxconnread"), seconds5),
+		ReadHeaderTimeout: readDurationConfig(viper.GetString("maxconnheader"), seconds2),
+		WriteTimeout:      readDurationConfig(viper.GetString("maxconnwrite"), seconds5),
+		IdleTimeout:       readDurationConfig(viper.GetString("maxconnidle"), seconds5),
+		MaxHeaderBytes:    readBytesConfig(viper.GetString("maxheadersize"), MEGABYTE),
+		GracefulShutdown:  readDurationConfig(viper.GetString("gracefulshutdown"), seconds5),
+	})
 }
 
 const (
