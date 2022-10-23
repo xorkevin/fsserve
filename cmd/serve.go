@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -68,8 +69,29 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 		c.logFatal(kerrors.WithMsg(err, "Failed to read config routes"))
 	}
 
+	instance, err := serve.NewSnowflake(8)
+	if err != nil {
+		c.logFatal(kerrors.WithMsg(err, "Failed to generate instance id"))
+	}
+
+	proxystrs := viper.GetStringSlice("proxies")
+	proxies := make([]netip.Prefix, 0, len(proxystrs))
+	for _, i := range proxystrs {
+		k, err := netip.ParsePrefix(i)
+		if err != nil {
+			c.logFatal(kerrors.WithMsg(err, "Invalid proxy CIDR"))
+		}
+		proxies = append(proxies, k)
+	}
+	c.log.Info(context.Background(), "Trusted proxies", klog.Fields{
+		"realip.proxies": strings.Join(proxystrs, ","),
+	})
+
 	rootSys := os.DirFS(c.serveFlags.base)
-	s := serve.NewServer(c.log.Logger, rootSys)
+	s := serve.NewServer(c.log.Logger, rootSys, serve.Config{
+		Instance: instance,
+		Proxies:  proxies,
+	})
 	if err := s.Mount(routes); err != nil {
 		c.logFatal(kerrors.WithMsg(err, "Failed to mount server routes"))
 	}
