@@ -53,7 +53,7 @@ type (
 		Prefix       string        `mapstructure:"prefix"`
 		Dir          bool          `mapstructure:"dir"`
 		Path         string        `mapstructure:"path"`
-		CacheControl []string      `mapstructure:"cachecontrol"`
+		CacheControl string        `mapstructure:"cachecontrol"`
 		ETag         bool          `mapstructure:"etag"`
 		Compressed   []*Compressed `mapstructure:"compressed"`
 	}
@@ -139,16 +139,16 @@ func writeError(ctx context.Context, log *klog.LevelLogger, w http.ResponseWrite
 	http.Error(w, http.StatusText(status), status)
 }
 
-func writeCacheHeaders(w http.ResponseWriter, fsys fs.FS, path string, cachecontrol []string, hasETag bool) error {
-	for _, j := range cachecontrol {
-		w.Header().Add(headerCacheControl, j)
-	}
-	if hasETag {
-		stat, err := fs.Stat(fsys, path)
-		if err != nil {
-			return kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", path))
+func writeCacheHeaders(w http.ResponseWriter, fsys fs.FS, path string, cachecontrol string, hasETag bool) error {
+	if cachecontrol != "" {
+		w.Header().Set(headerCacheControl, cachecontrol)
+		if hasETag {
+			stat, err := fs.Stat(fsys, path)
+			if err != nil {
+				return kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", path))
+			}
+			w.Header().Set(headerETag, fmt.Sprintf(`W/"%x-%x"`, stat.ModTime().Unix(), stat.Size()))
 		}
-		w.Header().Set(headerETag, fmt.Sprintf(`W/"%x-%x"`, stat.ModTime().Unix(), stat.Size()))
 	}
 	return nil
 }
