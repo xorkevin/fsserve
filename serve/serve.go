@@ -146,7 +146,7 @@ func writeCacheHeaders(w http.ResponseWriter, fsys fs.FS, path string, cachecont
 	if etag {
 		stat, err := fs.Stat(fsys, path)
 		if err != nil {
-			return err
+			return kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", path))
 		}
 		w.Header().Set(headerETag, fmt.Sprintf(`W/"%x-%x"`, stat.ModTime().Unix(), stat.Size()))
 	}
@@ -160,7 +160,7 @@ const (
 func (d *reqDetector) readFileBuf(ctx context.Context, fsys fs.FS, name string, buf []byte) (int, error) {
 	f, err := fsys.Open(name)
 	if err != nil {
-		return 0, err
+		return 0, kerrors.WithMsg(err, fmt.Sprintf("Failed to open file %s", name))
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
@@ -169,7 +169,7 @@ func (d *reqDetector) readFileBuf(ctx context.Context, fsys fs.FS, name string, 
 	}()
 	n, err := io.ReadFull(f, buf)
 	if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return n, kerrors.WithMsg(err, "Failed to read file")
+		return n, kerrors.WithMsg(err, fmt.Sprintf("Failed to read file %s", name))
 	}
 	return n, nil
 }
@@ -183,7 +183,7 @@ func (d *reqDetector) detectContentType(ctx context.Context, w http.ResponseWrit
 		var buf [sniffLen]byte
 		n, err := d.readFileBuf(ctx, fsys, name, buf[:])
 		if err != nil {
-			return err
+			return kerrors.WithMsg(err, fmt.Sprintf("Failed to sample file %s", name))
 		}
 		ctype = http.DetectContentType(buf[:n])
 	}
@@ -208,7 +208,7 @@ func (d *reqDetector) detectCompression(ctx context.Context, w http.ResponseWrit
 		// need to detect content type on original path since mime.TypeByExtension
 		// and http.DetectContentType does not handle .gz, .br, etc.
 		if err := d.detectContentType(ctx, w, fsys, origPath); err != nil {
-			return "", err
+			return "", kerrors.WithMsg(err, fmt.Sprintf("Failed to detect content type %s", origPath))
 		}
 		w.Header().Set(headerContentEncoding, j.Code)
 		w.Header().Add(headerVary, headerContentEncoding)
@@ -220,12 +220,12 @@ func (d *reqDetector) detectCompression(ctx context.Context, w http.ResponseWrit
 func (s *serverSubdir) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if err := writeCacheHeaders(w, s.fsys, r.URL.Path, s.route.CacheControl, s.route.ETag); err != nil {
-		writeError(ctx, s.log, w, err)
+		writeError(ctx, s.log, w, kerrors.WithMsg(err, "Failed to write cache headers"))
 		return
 	}
 	p, err := s.detector.detectCompression(ctx, w, r, s.fsys, r.URL.Path, s.route.Compressed)
 	if err != nil {
-		writeError(ctx, s.log, w, err)
+		writeError(ctx, s.log, w, kerrors.WithMsg(err, "Failed to detect compression"))
 		return
 	}
 	r.URL.Path = p
@@ -234,20 +234,20 @@ func (s *serverSubdir) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *serverFile) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if err := writeCacheHeaders(w, s.fsys, s.route.Path, s.route.CacheControl, s.route.ETag); err != nil {
-		writeError(ctx, s.log, w, err)
+		writeError(ctx, s.log, w, kerrors.WithMsg(err, "Failed to write cache headers"))
 		return
 	}
 	// may not use url path here to prevent unwanted file access
 	p, err := s.detector.detectCompression(ctx, w, r, s.fsys, s.route.Path, s.route.Compressed)
 	if err != nil {
-		writeError(ctx, s.log, w, err)
+		writeError(ctx, s.log, w, kerrors.WithMsg(err, "Failed to detect compression"))
 		return
 	}
 
 	// may not use url path here to prevent unwanted file access
 	f, err := s.httpSys.Open(p)
 	if err != nil {
-		writeError(ctx, s.log, w, err)
+		writeError(ctx, s.log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to open file %s", p)))
 		return
 	}
 	defer func() {
@@ -257,11 +257,11 @@ func (s *serverFile) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	stat, err := f.Stat()
 	if err != nil {
-		writeError(ctx, s.log, w, err)
+		writeError(ctx, s.log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", p)))
 		return
 	}
 	if stat.IsDir() {
-		writeError(ctx, s.log, w, kerrors.WithKind(nil, fs.ErrNotExist, "File is directory"))
+		writeError(ctx, s.log, w, kerrors.WithKind(nil, fs.ErrNotExist, fmt.Sprintf("File %s is directory", p)))
 		return
 	}
 	http.ServeContent(w, r, stat.Name(), stat.ModTime(), f)
@@ -453,6 +453,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"http.forwarded": forwarded,
 		"http.lreqid":    lreqid,
 	})
+	r = r.WithContext(ctx)
 	w2 := &serverResponseWriter{
 		ResponseWriter: w,
 		status:         0,
