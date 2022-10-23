@@ -7,11 +7,13 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"xorkevin.dev/klog"
 )
 
 type (
 	Cmd struct {
 		rootCmd    *cobra.Command
+		log        *klog.LevelLogger
 		version    string
 		rootFlags  rootFlags
 		serveFlags serveFlags

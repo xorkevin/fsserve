@@ -3,28 +3,27 @@
 all: install
 
 install:
-	go install .
+	go install -trimpath -ldflags "-w -s" .
 
-.PHONY: test coverage cover bench fmt vet prepare
+.PHONY: test coverage cover
 
-COVERAGE=cover.out
-COVERAGE_ARGS=-covermode count -coverprofile $(COVERAGE)
+TEST_ARGS?=
+TEST_PACKAGE?=./...
+COVERAGE?=cover.out
 
 test:
-	go test -cover $(COVERAGE_ARGS) ./...
+	go test -race -trimpath -ldflags "-w -s" -cover -covermode atomic -coverprofile $(COVERAGE) $(TEST_ARGS) $(TEST_PACKAGE)
+
 
 coverage:
 	go tool cover -html $(COVERAGE)
 
 cover: test coverage
 
-BENCHMARK_ARGS=-benchtime 5s -benchmem
-
-bench:
-	go test -bench . $(BENCHMARK_ARGS)
+.PHONY: fmt vet prepare
 
 fmt:
-	go fmt ./...
+	goimports -w .
 
 vet:
 	go vet ./...
@@ -32,7 +31,7 @@ vet:
 prepare: fmt vet
 
 BIN_NAME=fsserve
-MAIN_PATH=main.go
+MAIN_PATH=.
 BIN_DIR=./bin
 BIN_PATH=$(BIN_DIR)/$(BIN_NAME)
 

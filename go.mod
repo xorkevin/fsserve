@@ -5,6 +5,8 @@ go 1.17
 require (
 	github.com/spf13/cobra v1.2.1
 	github.com/spf13/viper v1.9.0
+	xorkevin.dev/kerrors v0.1.4
+	xorkevin.dev/klog v0.0.0-20221023030707-ceb005567fef
 )
 
 require (

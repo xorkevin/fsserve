@@ -2,7 +2,8 @@ package cmd
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +12,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"xorkevin.dev/fsserve/serve"
+	"xorkevin.dev/kerrors"
+	"xorkevin.dev/klog"
 )
 
 type (
@@ -41,29 +44,42 @@ func (c *Cmd) getServeCmd() *cobra.Command {
 	return serveCmd
 }
 
+func (c *Cmd) logFatal(err error) {
+	c.log.Err(context.Background(), err, nil)
+	os.Exit(1)
+}
+
 func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
+	c.log = klog.NewLevelLogger(klog.New(klog.OptSerializer(klog.NewJSONSerializer(klog.NewSyncWriter(os.Stderr)))))
+
 	var mimeTypes []serve.MimeType
 	if err := viper.UnmarshalKey("exttotype", &mimeTypes); err != nil {
-		log.Fatalln(err)
+		c.logFatal(kerrors.WithMsg(err, "Failed to read config exttotype"))
 	}
 	if err := serve.AddMimeTypes(mimeTypes); err != nil {
-		log.Fatalln(err)
+		c.logFatal(kerrors.WithMsg(err, "Failed to set ext to mime types"))
 	}
+	c.log.Info(context.Background(), "Added ext mime types", klog.Fields{
+		"mimetypes": mimeTypes,
+	})
+
 	var routes []*serve.Route
 	if err := viper.UnmarshalKey("routes", &routes); err != nil {
-		log.Fatalln(err)
+		c.logFatal(kerrors.WithMsg(err, "Failed to read config routes"))
 	}
-	s, err := serve.NewServer(c.serveFlags.base, routes)
-	if err != nil {
-		log.Fatalln(err)
+
+	rootSys := os.DirFS(c.serveFlags.base)
+	s := serve.NewServer(c.log.Logger, rootSys)
+	if err := s.Mount(routes); err != nil {
+		c.logFatal(kerrors.WithMsg(err, "Failed to mount server routes"))
 	}
 	s.Serve(context.Background(), c.serveFlags.port, serve.Opts{
-		ReadTimeout:       readDurationConfig(viper.GetString("maxconnread"), seconds5),
-		ReadHeaderTimeout: readDurationConfig(viper.GetString("maxconnheader"), seconds2),
-		WriteTimeout:      readDurationConfig(viper.GetString("maxconnwrite"), seconds5),
-		IdleTimeout:       readDurationConfig(viper.GetString("maxconnidle"), seconds5),
-		MaxHeaderBytes:    readBytesConfig(viper.GetString("maxheadersize"), MEGABYTE),
-		GracefulShutdown:  readDurationConfig(viper.GetString("gracefulshutdown"), seconds5),
+		ReadTimeout:       c.readDurationConfig(viper.GetString("maxconnread"), seconds5),
+		ReadHeaderTimeout: c.readDurationConfig(viper.GetString("maxconnheader"), seconds2),
+		WriteTimeout:      c.readDurationConfig(viper.GetString("maxconnwrite"), seconds5),
+		IdleTimeout:       c.readDurationConfig(viper.GetString("maxconnidle"), seconds5),
+		MaxHeaderBytes:    c.readBytesConfig(viper.GetString("maxheadersize"), MEGABYTE),
+		GracefulShutdown:  c.readDurationConfig(viper.GetString("gracefulshutdown"), seconds5),
 	})
 }
 
@@ -72,10 +88,10 @@ const (
 	seconds2 = 2 * time.Second
 )
 
-func readDurationConfig(s string, d time.Duration) time.Duration {
+func (c *Cmd) readDurationConfig(s string, d time.Duration) time.Duration {
 	t, err := time.ParseDuration(s)
 	if err != nil {
-		log.Printf("Invalid config time value: %s\n", s)
+		c.log.WarnErr(context.Background(), kerrors.WithMsg(err, fmt.Sprintf("Invalid config time value: %s", s)), nil)
 		return d
 	}
 	return t
@@ -89,20 +105,24 @@ const (
 	GIGABYTE
 )
 
-func readBytesConfig(s string, d int) int {
+func (c *Cmd) readBytesConfig(s string, d int) int {
 	b := strings.ToUpper(s)
 
 	i := strings.IndexFunc(s, unicode.IsLetter)
 
 	if i < 0 {
-		log.Printf("Invalid config bytes value: %s\n", s)
+		c.log.WarnErr(context.Background(), kerrors.WithMsg(nil, fmt.Sprintf("Invalid config bytes value: %s", s)), nil)
 		return d
 	}
 
 	bytesString, multiple := b[:i], b[i:]
 	bytes, err := strconv.Atoi(bytesString)
-	if err != nil || bytes < 0 {
-		log.Printf("Invalid config bytes value: %s: %v\n", s, err)
+	if err != nil {
+		c.log.WarnErr(context.Background(), kerrors.WithMsg(err, fmt.Sprintf("Invalid config bytes value: %s", s)), nil)
+		return d
+	}
+	if bytes < 0 {
+		c.log.WarnErr(context.Background(), kerrors.WithMsg(nil, fmt.Sprintf("Invalid config bytes value: %s", s)), nil)
 		return d
 	}
 
@@ -116,7 +136,7 @@ func readBytesConfig(s string, d int) int {
 	case "B":
 		return bytes
 	default:
-		log.Printf("Invalid config bytes value: %s\n", s)
+		c.log.WarnErr(context.Background(), kerrors.WithMsg(nil, fmt.Sprintf("Invalid config bytes value: %s", s)), nil)
 		return d
 	}
 }
