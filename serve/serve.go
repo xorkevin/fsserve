@@ -139,11 +139,11 @@ func writeError(ctx context.Context, log *klog.LevelLogger, w http.ResponseWrite
 	http.Error(w, http.StatusText(status), status)
 }
 
-func writeCacheHeaders(w http.ResponseWriter, fsys fs.FS, path string, cachecontrol []string, etag bool) error {
+func writeCacheHeaders(w http.ResponseWriter, fsys fs.FS, path string, cachecontrol []string, hasETag bool) error {
 	for _, j := range cachecontrol {
 		w.Header().Add(headerCacheControl, j)
 	}
-	if etag {
+	if hasETag {
 		stat, err := fs.Stat(fsys, path)
 		if err != nil {
 			return kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", path))
