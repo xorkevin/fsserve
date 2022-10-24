@@ -54,6 +54,7 @@ type (
 		Dir          bool         `mapstructure:"dir"`
 		Path         string       `mapstructure:"path"`
 		CacheControl string       `mapstructure:"cachecontrol"`
+		ETagStrong   bool         `mapstruucture:"etagstrong"`
 		Compressed   []Compressed `mapstructure:"compressed"`
 	}
 
@@ -104,6 +105,7 @@ const (
 	headerContentEncoding = "Content-Encoding"
 	headerContentType     = "Content-Type"
 	headerETag            = "ETag"
+	headerIfNoneMatch     = "If-None-Match"
 	headerVary            = "Vary"
 )
 
@@ -136,18 +138,29 @@ func writeError(ctx context.Context, log *klog.LevelLogger, w http.ResponseWrite
 	http.Error(w, http.StatusText(status), status)
 }
 
-func writeCacheHeaders(w http.ResponseWriter, headers http.Header, fsys fs.FS, path string, cachecontrol string) error {
+func writeCacheHeaders(w http.ResponseWriter, headers http.Header, fsys fs.FS, path string, cachecontrol string, etagStrong bool) (bool, error) {
 	if cachecontrol != "" {
 		stat, err := fs.Stat(fsys, path)
 		if err != nil {
-			return kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", path))
+			return false, kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", path))
+		}
+
+		var etag string
+		if etagStrong {
+			etag = fmt.Sprintf(`%x-%x`, stat.ModTime().Unix(), stat.Size())
+		} else {
+			etag = fmt.Sprintf(`W/"%x-%x"`, stat.ModTime().Unix(), stat.Size())
+		}
+
+		if v := headers.Get(headerIfNoneMatch); v == etag {
+			return true, nil
 		}
 
 		w.Header().Set(headerCacheControl, cachecontrol)
-		// ETag will also be used by [net/http.ServeContent]
-		w.Header().Set(headerETag, fmt.Sprintf(`W/"%x-%x"`, stat.ModTime().Unix(), stat.Size()))
+		// ETag will also be used by [net/http.ServeContent] to send 304 not modified
+		w.Header().Set(headerETag, etag)
 	}
-	return nil
+	return false, nil
 }
 
 const (
@@ -230,10 +243,14 @@ func detectFilepath(
 	fsys fs.FS,
 	origPath string,
 	cachecontrol string,
+	etagStrong bool,
 	compressed []Compressed,
 ) (string, bool) {
-	if err := writeCacheHeaders(w, headers, fsys, origPath, cachecontrol); err != nil {
+	if notModified, err := writeCacheHeaders(w, headers, fsys, origPath, cachecontrol, etagStrong); err != nil {
 		writeError(ctx, log, w, kerrors.WithMsg(err, "Failed to write cache headers"))
+		return "", true
+	} else if notModified {
+		w.WriteHeader(http.StatusNotModified)
 		return "", true
 	}
 
@@ -278,7 +295,7 @@ func serveFile(ctx context.Context, log *klog.LevelLogger, w http.ResponseWriter
 
 func (s *serverSubdir) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	p, wroteResponse := detectFilepath(ctx, s.log, w, r.Header, s.fsys, r.URL.Path, s.route.CacheControl, s.route.Compressed)
+	p, wroteResponse := detectFilepath(ctx, s.log, w, r.Header, s.fsys, r.URL.Path, s.route.CacheControl, s.route.ETagStrong, s.route.Compressed)
 	if wroteResponse {
 		return
 	}
@@ -288,7 +305,7 @@ func (s *serverSubdir) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *serverFile) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	// may not use url path here to prevent unwanted file access
-	p, wroteResponse := detectFilepath(ctx, s.log, w, r.Header, s.fsys, s.route.Path, s.route.CacheControl, s.route.Compressed)
+	p, wroteResponse := detectFilepath(ctx, s.log, w, r.Header, s.fsys, s.route.Path, s.route.CacheControl, s.route.ETagStrong, s.route.Compressed)
 	if wroteResponse {
 		return
 	}
@@ -371,24 +388,35 @@ const (
 	headerXForwardedFor = "X-Forwarded-For"
 )
 
-func getForwardedForIP(r *http.Request, proxies []netip.Prefix) string {
-	xff := r.Header.Get(headerXForwardedFor)
-	if xff == "" {
+func getRealIP(r *http.Request, proxies []netip.Prefix) string {
+	host, err := netip.ParseAddrPort(strings.TrimSpace(r.RemoteAddr))
+	if err != nil {
 		return ""
 	}
+	remoteip := host.Addr()
+	if !ipnetsContain(remoteip, proxies) {
+		return remoteip.String()
+	}
 
+	xff := r.Header.Get(headerXForwardedFor)
+	if xff == "" {
+		return remoteip.String()
+	}
+
+	prev := remoteip
 	ipstrs := strings.Split(xff, ",")
 	for i := len(ipstrs) - 1; i >= 0; i-- {
 		ip, err := netip.ParseAddr(strings.TrimSpace(ipstrs[i]))
 		if err != nil {
-			break
+			return remoteip.String()
 		}
 		if !ipnetsContain(ip, proxies) {
 			return ip.String()
 		}
+		prev = ip
 	}
 
-	return ""
+	return prev.String()
 }
 
 func ipnetsContain(ip netip.Addr, ipnet []netip.Prefix) bool {
@@ -470,14 +498,14 @@ func (w *serverResponseWriter) Write(p []byte) (int, error) {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	lreqid := s.lreqID()
-	forwarded := getForwardedForIP(r, s.config.Proxies)
+	realip := getRealIP(r, s.config.Proxies)
 	ctx = klog.WithFields(ctx, klog.Fields{
-		"http.host":      r.Host,
-		"http.method":    r.Method,
-		"http.reqpath":   r.URL.EscapedPath(),
-		"http.remote":    r.RemoteAddr,
-		"http.forwarded": forwarded,
-		"http.lreqid":    lreqid,
+		"http.host":    r.Host,
+		"http.method":  r.Method,
+		"http.reqpath": r.URL.EscapedPath(),
+		"http.remote":  r.RemoteAddr,
+		"http.realip":  realip,
+		"http.lreqid":  lreqid,
 	})
 	r = r.WithContext(ctx)
 	w2 := &serverResponseWriter{
