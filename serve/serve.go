@@ -54,14 +54,12 @@ type (
 		Dir          bool          `mapstructure:"dir"`
 		Path         string        `mapstructure:"path"`
 		CacheControl string        `mapstructure:"cachecontrol"`
-		ETag         bool          `mapstructure:"etag"`
 		Compressed   []*Compressed `mapstructure:"compressed"`
 	}
 
 	Server struct {
 		log      *klog.LevelLogger
 		rootSys  fs.FS
-		httpSys  http.FileSystem
 		mux      *http.ServeMux
 		config   Config
 		reqcount *atomic.Uint32
@@ -93,7 +91,7 @@ type (
 		log      *klog.LevelLogger
 		detector *reqDetector
 		fsys     fs.FS
-		httpSys  http.FileSystem
+		handler  http.Handler
 		route    Route
 	}
 
@@ -139,16 +137,16 @@ func writeError(ctx context.Context, log *klog.LevelLogger, w http.ResponseWrite
 	http.Error(w, http.StatusText(status), status)
 }
 
-func writeCacheHeaders(w http.ResponseWriter, fsys fs.FS, path string, cachecontrol string, hasETag bool) error {
+func writeCacheHeaders(w http.ResponseWriter, headers http.Header, fsys fs.FS, path string, cachecontrol string) error {
 	if cachecontrol != "" {
-		w.Header().Set(headerCacheControl, cachecontrol)
-		if hasETag {
-			stat, err := fs.Stat(fsys, path)
-			if err != nil {
-				return kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", path))
-			}
-			w.Header().Set(headerETag, fmt.Sprintf(`W/"%x-%x"`, stat.ModTime().Unix(), stat.Size()))
+		stat, err := fs.Stat(fsys, path)
+		if err != nil {
+			return kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", path))
 		}
+
+		w.Header().Set(headerCacheControl, cachecontrol)
+		// ETag will also be used by [net/http.ServeContent]
+		w.Header().Set(headerETag, fmt.Sprintf(`W/"%x-%x"`, stat.ModTime().Unix(), stat.Size()))
 	}
 	return nil
 }
@@ -191,9 +189,9 @@ func (d *reqDetector) detectContentType(ctx context.Context, w http.ResponseWrit
 	return nil
 }
 
-func (d *reqDetector) detectCompression(ctx context.Context, w http.ResponseWriter, r *http.Request, fsys fs.FS, origPath string, compressed []*Compressed) (string, error) {
+func (d *reqDetector) detectCompression(ctx context.Context, w http.ResponseWriter, headers http.Header, fsys fs.FS, origPath string, compressed []*Compressed) (string, error) {
 	encodingsSet := map[string]struct{}{}
-	if accept := strings.TrimSpace(r.Header.Get(headerAcceptEncoding)); accept != "" {
+	if accept := strings.TrimSpace(headers.Get(headerAcceptEncoding)); accept != "" {
 		for _, directive := range strings.Split(accept, ",") {
 			enc, _, _ := strings.Cut(directive, ";")
 			enc = strings.TrimSpace(enc)
@@ -205,73 +203,85 @@ func (d *reqDetector) detectCompression(ctx context.Context, w http.ResponseWrit
 		if !ok || (j.regex != nil && !j.regex.MatchString(origPath)) {
 			continue
 		}
-		// need to detect content type on original path since mime.TypeByExtension
-		// and http.DetectContentType does not handle .gz, .br, etc.
-		if err := d.detectContentType(ctx, w, fsys, origPath); err != nil {
-			return "", kerrors.WithMsg(err, fmt.Sprintf("Failed to detect content type %s", origPath))
+
+		compressedPath := origPath + j.Suffix
+		stat, err := fs.Stat(fsys, compressedPath)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
+				continue
+			}
+			return "", kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", compressedPath))
 		}
+		if stat.IsDir() {
+			continue
+		}
+
 		w.Header().Set(headerContentEncoding, j.Code)
 		w.Header().Add(headerVary, headerContentEncoding)
-		return origPath + j.Suffix, nil
+		return compressedPath, nil
 	}
 	return origPath, nil
 }
 
+func (d *reqDetector) detectFilepath(
+	ctx context.Context,
+	log *klog.LevelLogger,
+	w http.ResponseWriter,
+	headers http.Header,
+	fsys fs.FS,
+	origPath string,
+	cachecontrol string,
+	compressed []*Compressed,
+) (string, bool) {
+	if err := writeCacheHeaders(w, headers, fsys, origPath, cachecontrol); err != nil {
+		writeError(ctx, log, w, kerrors.WithMsg(err, "Failed to write cache headers"))
+		return "", true
+	}
+
+	// need to detect content type on original path since mime.TypeByExtension
+	// and http.DetectContentType does not handle .gz, .br, etc.
+	if err := d.detectContentType(ctx, w, fsys, origPath); err != nil {
+		writeError(ctx, log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to detect content type %s", origPath)))
+		return "", true
+	}
+
+	p, err := d.detectCompression(ctx, w, headers, fsys, origPath, compressed)
+	if err != nil {
+		writeError(ctx, log, w, kerrors.WithMsg(err, "Failed to detect compression"))
+		return "", true
+	}
+
+	return p, false
+}
+
 func (s *serverSubdir) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	if err := writeCacheHeaders(w, s.fsys, r.URL.Path, s.route.CacheControl, s.route.ETag); err != nil {
-		writeError(ctx, s.log, w, kerrors.WithMsg(err, "Failed to write cache headers"))
+	p, wroteResponse := s.detector.detectFilepath(ctx, s.log, w, r.Header, s.fsys, r.URL.Path, s.route.CacheControl, s.route.Compressed)
+	if wroteResponse {
 		return
 	}
-	p, err := s.detector.detectCompression(ctx, w, r, s.fsys, r.URL.Path, s.route.Compressed)
-	if err != nil {
-		writeError(ctx, s.log, w, kerrors.WithMsg(err, "Failed to detect compression"))
-		return
-	}
+
 	r.URL.Path = p
 	s.handler.ServeHTTP(w, r)
 }
+
 func (s *serverFile) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	if err := writeCacheHeaders(w, s.fsys, s.route.Path, s.route.CacheControl, s.route.ETag); err != nil {
-		writeError(ctx, s.log, w, kerrors.WithMsg(err, "Failed to write cache headers"))
-		return
-	}
 	// may not use url path here to prevent unwanted file access
-	p, err := s.detector.detectCompression(ctx, w, r, s.fsys, s.route.Path, s.route.Compressed)
-	if err != nil {
-		writeError(ctx, s.log, w, kerrors.WithMsg(err, "Failed to detect compression"))
+	p, wroteResponse := s.detector.detectFilepath(ctx, s.log, w, r.Header, s.fsys, s.route.Path, s.route.CacheControl, s.route.Compressed)
+	if wroteResponse {
 		return
 	}
 
 	// may not use url path here to prevent unwanted file access
-	f, err := s.httpSys.Open(p)
-	if err != nil {
-		writeError(ctx, s.log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to open file %s", p)))
-		return
-	}
-	defer func() {
-		if err := f.Close(); err != nil {
-			s.log.Err(r.Context(), kerrors.WithMsg(err, fmt.Sprintf("Failed to close open file %s", p)), nil)
-		}
-	}()
-	stat, err := f.Stat()
-	if err != nil {
-		writeError(ctx, s.log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", p)))
-		return
-	}
-	if stat.IsDir() {
-		writeError(ctx, s.log, w, kerrors.WithKind(nil, fs.ErrNotExist, fmt.Sprintf("File %s is directory", p)))
-		return
-	}
-	http.ServeContent(w, r, stat.Name(), stat.ModTime(), f)
+	r.URL.Path = p
+	s.handler.ServeHTTP(w, r)
 }
 
 func NewServer(l klog.Logger, rootSys fs.FS, config Config) *Server {
 	return &Server{
 		log:      klog.NewLevelLogger(l),
 		rootSys:  rootSys,
-		httpSys:  http.FS(rootSys),
 		config:   config,
 		reqcount: &atomic.Uint32{},
 	}
@@ -333,7 +343,7 @@ func (s *Server) Mount(routes []*Route) error {
 				})),
 				detector: detector,
 				fsys:     s.rootSys,
-				httpSys:  s.httpSys,
+				handler:  http.FileServer(http.FS(s.rootSys)),
 				route:    *k,
 			})
 		}
