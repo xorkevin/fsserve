@@ -35,7 +35,7 @@ func (c *Cmd) getServeCmd() *cobra.Command {
 	serveCmd.PersistentFlags().IntVarP(&c.serveFlags.port, "port", "p", 8080, "port to run the http server on")
 	serveCmd.PersistentFlags().StringVarP(&c.serveFlags.base, "base", "b", ".", "static files base")
 	viper.SetDefault("exttotype", []serve.MimeType{})
-	viper.SetDefault("routes", []*serve.Route{})
+	viper.SetDefault("routes", []serve.Route{})
 	viper.SetDefault("maxheadersize", "1M")
 	viper.SetDefault("maxconnread", "5s")
 	viper.SetDefault("maxconnheader", "2s")
@@ -64,7 +64,7 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 		"mimetypes": mimeTypes,
 	})
 
-	var routes []*serve.Route
+	var routes []serve.Route
 	if err := viper.UnmarshalKey("routes", &routes); err != nil {
 		c.logFatal(kerrors.WithMsg(err, "Failed to read config routes"))
 	}
