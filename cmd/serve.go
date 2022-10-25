@@ -33,7 +33,8 @@ func (c *Cmd) getServeCmd() *cobra.Command {
 		DisableAutoGenTag: true,
 	}
 	serveCmd.PersistentFlags().IntVarP(&c.serveFlags.port, "port", "p", 8080, "port to run the http server on")
-	serveCmd.PersistentFlags().StringVarP(&c.serveFlags.base, "base", "b", ".", "static files base")
+	serveCmd.PersistentFlags().StringVarP(&c.serveFlags.base, "base", "b", "", "static files base")
+	viper.SetDefault("base", "")
 	viper.SetDefault("exttotype", []serve.MimeType{})
 	viper.SetDefault("routes", []serve.Route{})
 	viper.SetDefault("maxheadersize", "1M")
@@ -84,10 +85,21 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 		proxies = append(proxies, k)
 	}
 	c.log.Info(context.Background(), "Trusted proxies", klog.Fields{
-		"realip.proxies": strings.Join(proxystrs, ","),
+		"realip.proxies": proxystrs,
 	})
 
-	rootSys := os.DirFS(c.serveFlags.base)
+	base := c.serveFlags.base
+	if base == "" {
+		base = viper.GetString("base")
+	}
+	if base == "" {
+		base = "."
+	}
+	c.log.Info(context.Background(), "Serving directory at base", klog.Fields{
+		"fs.base": base,
+	})
+
+	rootSys := os.DirFS(base)
 	s := serve.NewServer(c.log.Logger, rootSys, serve.Config{
 		Instance: instance,
 		Proxies:  proxies,

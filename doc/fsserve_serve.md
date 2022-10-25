@@ -13,7 +13,7 @@ fsserve serve [flags]
 ### Options
 
 ```
-  -b, --base string   static files base (default ".")
+  -b, --base string   static files base
   -h, --help          help for serve
   -p, --port int      port to run the http server on (default 8080)
 ```

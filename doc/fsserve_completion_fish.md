@@ -1,17 +1,18 @@
 ## fsserve completion fish
 
-generate the autocompletion script for fish
+Generate the autocompletion script for fish
 
 ### Synopsis
-
 
 Generate the autocompletion script for the fish shell.
 
 To load completions in your current shell session:
-$ fsserve completion fish | source
+
+	fsserve completion fish | source
 
 To load completions for every new session, execute once:
-$ fsserve completion fish > ~/.config/fish/completions/fsserve.fish
+
+	fsserve completion fish > ~/.config/fish/completions/fsserve.fish
 
 You will need to start a new shell for this setup to take effect.
 
@@ -36,5 +37,5 @@ fsserve completion fish [flags]
 
 ### SEE ALSO
 
-* [fsserve completion](fsserve_completion.md)	 - generate the autocompletion script for the specified shell
+* [fsserve completion](fsserve_completion.md)	 - Generate the autocompletion script for the specified shell
 
