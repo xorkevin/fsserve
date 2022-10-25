@@ -141,7 +141,7 @@ func TestServer(t *testing.T) {
 		} {
 			f := fsys[i]
 			assert.NotNil(f)
-			b := bytes.Buffer{}
+			var b bytes.Buffer
 			gw.Reset(&b)
 			_, err := gw.Write(f.Data)
 			assert.NoError(err)
@@ -353,7 +353,7 @@ func TestServer(t *testing.T) {
 
 			assert := require.New(t)
 
-			logb := bytes.Buffer{}
+			var logb bytes.Buffer
 			server := NewServer(klog.New(klog.OptSerializer(klog.NewJSONSerializer(klog.NewSyncWriter(&logb)))), fsys, Config{
 				Instance: "testinstance",
 				Proxies: []netip.Prefix{
@@ -559,7 +559,7 @@ func TestServer(t *testing.T) {
 					assert.Equal("gzip", rec.HeaderMap.Get(headerContentEncoding))
 					gr, err := gzip.NewReader(rec.Body)
 					assert.NoError(err)
-					b := bytes.Buffer{}
+					var b bytes.Buffer
 					_, err = io.Copy(&b, gr)
 					assert.NoError(err)
 					assert.Equal(tc.Body, b.String())
@@ -664,6 +664,42 @@ func TestServer(t *testing.T) {
 			assert.False(jdec.More())
 		})
 	}
+
+	t.Run("prevents disallowed methods", func(t *testing.T) {
+		t.Parallel()
+
+		assert := require.New(t)
+
+		var logb bytes.Buffer
+		server := NewServer(klog.New(klog.OptSerializer(klog.NewJSONSerializer(klog.NewSyncWriter(&logb)))), fsys, Config{
+			Instance: "testinstance",
+		})
+
+		for _, i := range []string{
+			http.MethodGet,
+			http.MethodHead,
+		} {
+			req := httptest.NewRequest(i, "/", nil)
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			assert.Equal(http.StatusNotFound, rec.Code)
+		}
+
+		for _, i := range []string{
+			http.MethodPost,
+			http.MethodPut,
+			http.MethodPatch,
+			http.MethodDelete,
+			http.MethodConnect,
+			http.MethodOptions,
+			http.MethodTrace,
+		} {
+			req := httptest.NewRequest(i, "/", nil)
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			assert.Equal(http.StatusMethodNotAllowed, rec.Code)
+		}
+	})
 }
 
 func TestAddMimeTypes(t *testing.T) {

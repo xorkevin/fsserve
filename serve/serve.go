@@ -319,6 +319,7 @@ func NewServer(l klog.Logger, rootSys fs.FS, config Config) *Server {
 	return &Server{
 		log:      klog.NewLevelLogger(l),
 		rootSys:  rootSys,
+		mux:      http.NewServeMux(),
 		config:   config,
 		reqcount: &atomic.Uint32{},
 	}
@@ -498,6 +499,21 @@ func (w *serverResponseWriter) Write(p []byte) (int, error) {
 	return w.ResponseWriter.Write(p)
 }
 
+var (
+	allowedHTTPMethods = map[string]struct{}{
+		http.MethodGet:  {},
+		http.MethodHead: {},
+	}
+)
+
+func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
+	if _, ok := allowedHTTPMethods[r.Method]; !ok {
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+	s.mux.ServeHTTP(w, r)
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	lreqid := s.lreqID()
@@ -517,7 +533,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info(ctx, "HTTP request", nil)
 	start := time.Now()
-	s.mux.ServeHTTP(w2, r)
+	s.handleHTTP(w2, r)
 	duration := time.Since(start)
 	s.log.Info(ctx, "HTTP response", klog.Fields{
 		"http.status":     w2.status,
