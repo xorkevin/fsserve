@@ -666,6 +666,31 @@ func TestServer(t *testing.T) {
 	}
 }
 
+func TestAddMimeTypes(t *testing.T) {
+	t.Parallel()
+
+	assert := require.New(t)
+
+	assert.NoError(AddMimeTypes([]MimeType{
+		{
+			Ext:         ".mp3",
+			ContentType: "audio/mpeg",
+		},
+		{
+			Ext:         ".mp4",
+			ContentType: "video/mp4",
+		},
+		{
+			Ext:         ".woff",
+			ContentType: "font/woff",
+		},
+		{
+			Ext:         ".woff2",
+			ContentType: "font/woff2",
+		},
+	}))
+}
+
 func TestSnowflake(t *testing.T) {
 	t.Parallel()
 
