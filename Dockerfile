@@ -1,4 +1,4 @@
-FROM golang:alpine3.14 as builder
+FROM golang:alpine3.16 as builder
 RUN apk add --no-cache ca-certificates tzdata mailcap
 
 FROM scratch
