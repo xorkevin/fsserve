@@ -14,7 +14,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
-	"path/filepath"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -54,7 +54,6 @@ type (
 		Dir          bool         `mapstructure:"dir"`
 		Path         string       `mapstructure:"path"`
 		CacheControl string       `mapstructure:"cachecontrol"`
-		ETagStrong   bool         `mapstruucture:"etagstrong"`
 		Compressed   []Compressed `mapstructure:"compressed"`
 	}
 
@@ -138,29 +137,30 @@ func writeError(ctx context.Context, log *klog.LevelLogger, w http.ResponseWrite
 	http.Error(w, http.StatusText(status), status)
 }
 
-func writeCacheHeaders(w http.ResponseWriter, headers http.Header, fsys fs.FS, path string, cachecontrol string, etagStrong bool) (bool, error) {
-	if cachecontrol != "" {
-		stat, err := fs.Stat(fsys, path)
-		if err != nil {
-			return false, kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", path))
-		}
+func getFileStat(fsys fs.FS, p string) (fs.FileInfo, error) {
+	stat, err := fs.Stat(fsys, p)
+	if err != nil {
+		return nil, kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", p))
+	}
+	if stat.IsDir() {
+		return nil, kerrors.WithKind(nil, fs.ErrNotExist, fmt.Sprintf("File %s is a directory", p))
+	}
+	return stat, nil
+}
 
-		var etag string
-		if etagStrong {
-			etag = fmt.Sprintf(`%x-%x`, stat.ModTime().Unix(), stat.Size())
-		} else {
-			etag = fmt.Sprintf(`W/"%x-%x"`, stat.ModTime().Unix(), stat.Size())
-		}
+func writeCacheHeaders(w http.ResponseWriter, headers http.Header, stat fs.FileInfo, cachecontrol string) bool {
+	if cachecontrol != "" {
+		etag := fmt.Sprintf(`W/"%x-%x"`, stat.ModTime().Unix(), stat.Size())
 
 		if v := headers.Get(headerIfNoneMatch); v == etag {
-			return true, nil
+			return true
 		}
 
 		w.Header().Set(headerCacheControl, cachecontrol)
 		// ETag will also be used by [net/http.ServeContent] to send 304 not modified
 		w.Header().Set(headerETag, etag)
 	}
-	return false, nil
+	return false
 }
 
 const (
@@ -188,12 +188,12 @@ func detectContentType(ctx context.Context, log *klog.LevelLogger, w http.Respon
 	if w.Header().Get(headerContentType) != "" {
 		return nil
 	}
-	ctype := mime.TypeByExtension(filepath.Ext(name))
+	ctype := mime.TypeByExtension(path.Ext(name))
 	if ctype == "" {
 		var buf [sniffLen]byte
 		n, err := readFileBuf(ctx, log, fsys, name, buf[:])
 		if err != nil {
-			return kerrors.WithMsg(err, fmt.Sprintf("Failed to sample file %s", name))
+			return err
 		}
 		ctype = http.DetectContentType(buf[:n])
 	}
@@ -212,6 +212,7 @@ func detectCompression(ctx context.Context, w http.ResponseWriter, headers http.
 	}
 	for _, j := range compressed {
 		_, ok := encodingsSet[j.Code]
+		// if regex is nil, then test was unspecified, and should always match
 		if !ok || (j.regex != nil && !j.regex.MatchString(origPath)) {
 			continue
 		}
@@ -243,34 +244,36 @@ func detectFilepath(
 	fsys fs.FS,
 	origPath string,
 	cachecontrol string,
-	etagStrong bool,
 	compressed []Compressed,
-) (string, bool) {
-	if notModified, err := writeCacheHeaders(w, headers, fsys, origPath, cachecontrol, etagStrong); err != nil {
-		writeError(ctx, log, w, kerrors.WithMsg(err, "Failed to write cache headers"))
-		return "", true
-	} else if notModified {
+) (string, fs.FileInfo, bool) {
+	stat, err := getFileStat(fsys, origPath)
+	if err != nil {
+		writeError(ctx, log, w, err)
+		return "", nil, true
+	}
+
+	if notModified := writeCacheHeaders(w, headers, stat, cachecontrol); notModified {
 		w.WriteHeader(http.StatusNotModified)
-		return "", true
+		return "", nil, true
 	}
 
 	// need to detect content type on original path since mime.TypeByExtension
 	// and http.DetectContentType does not handle .gz, .br, etc.
 	if err := detectContentType(ctx, log, w, fsys, origPath); err != nil {
-		writeError(ctx, log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to detect content type %s", origPath)))
-		return "", true
+		writeError(ctx, log, w, err)
+		return "", nil, true
 	}
 
 	p, err := detectCompression(ctx, w, headers, fsys, origPath, compressed)
 	if err != nil {
 		writeError(ctx, log, w, kerrors.WithMsg(err, "Failed to detect compression"))
-		return "", true
+		return "", nil, true
 	}
 
-	return p, false
+	return p, stat, false
 }
 
-func serveFile(ctx context.Context, log *klog.LevelLogger, w http.ResponseWriter, r *http.Request, httpSys http.FileSystem, p string) {
+func serveFile(ctx context.Context, log *klog.LevelLogger, w http.ResponseWriter, r *http.Request, httpSys http.FileSystem, p string, origStat fs.FileInfo) {
 	f, err := httpSys.Open(p)
 	if err != nil {
 		writeError(ctx, log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to open file %s", p)))
@@ -287,29 +290,29 @@ func serveFile(ctx context.Context, log *klog.LevelLogger, w http.ResponseWriter
 		return
 	}
 	if stat.IsDir() {
-		writeError(ctx, log, w, kerrors.WithKind(nil, fs.ErrNotExist, fmt.Sprintf("File %s is directory", p)))
+		writeError(ctx, log, w, kerrors.WithKind(nil, fs.ErrNotExist, fmt.Sprintf("File %s is a directory", p)))
 		return
 	}
-	http.ServeContent(w, r, stat.Name(), stat.ModTime(), f)
+	http.ServeContent(w, r, origStat.Name(), origStat.ModTime(), f)
 }
 
 func (s *serverSubdir) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	p, wroteResponse := detectFilepath(ctx, s.log, w, r.Header, s.fsys, r.URL.Path, s.route.CacheControl, s.route.ETagStrong, s.route.Compressed)
+	p, stat, wroteResponse := detectFilepath(ctx, s.log, w, r.Header, s.fsys, r.URL.Path, s.route.CacheControl, s.route.Compressed)
 	if wroteResponse {
 		return
 	}
-	serveFile(ctx, s.log, w, r, s.httpSys, p)
+	serveFile(ctx, s.log, w, r, s.httpSys, p, stat)
 }
 
 func (s *serverFile) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	// may not use url path here to prevent unwanted file access
-	p, wroteResponse := detectFilepath(ctx, s.log, w, r.Header, s.fsys, s.route.Path, s.route.CacheControl, s.route.ETagStrong, s.route.Compressed)
+	p, stat, wroteResponse := detectFilepath(ctx, s.log, w, r.Header, s.fsys, s.route.Path, s.route.CacheControl, s.route.Compressed)
 	if wroteResponse {
 		return
 	}
-	serveFile(ctx, s.log, w, r, s.httpSys, p)
+	serveFile(ctx, s.log, w, r, s.httpSys, p, stat)
 }
 
 func NewServer(l klog.Logger, rootSys fs.FS, config Config) *Server {

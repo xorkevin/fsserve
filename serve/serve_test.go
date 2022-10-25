@@ -46,7 +46,7 @@ type (
 	}
 )
 
-func checkHTTPLog(t *testing.T, jdec *json.Decoder, path string, remoteaddr string, realip string, status int) {
+func checkHTTPLog(t *testing.T, jdec *json.Decoder, path string, remoteaddr string, realip string, status int, otherLogs []string) {
 	t.Helper()
 
 	assert := require.New(t)
@@ -67,6 +67,10 @@ func checkHTTPLog(t *testing.T, jdec *json.Decoder, path string, remoteaddr stri
 		Status:  0,
 		Latency: 0,
 	}, vlog)
+	for _, i := range otherLogs {
+		assert.NoError(jdec.Decode(&vlog))
+		assert.Contains(vlog.Msg, i)
+	}
 	assert.NoError(jdec.Decode(&vlog))
 	assert.True(vlog.Host != "")
 	assert.True(vlog.LReqID != "")
@@ -104,6 +108,18 @@ func TestServer(t *testing.T) {
 			Data:    []byte(`this is a test js file`),
 			Mode:    filemode,
 			ModTime: now,
+		},
+		"static/fileunknownext": &fstest.MapFile{
+			Data: []byte(`<!DOCTYPE HTML>`),
+		},
+		"static/test.html": &fstest.MapFile{
+			Data: []byte(`sample html file`),
+		},
+		"static/test.html.gz/textfile": &fstest.MapFile{
+			Data: []byte(`sample text file`),
+		},
+		"subdir/textfile": &fstest.MapFile{
+			Data: []byte(`sample text file`),
 		},
 		"manifest.json": &fstest.MapFile{
 			Data:    []byte(`this is a test json file`),
@@ -144,14 +160,12 @@ func TestServer(t *testing.T) {
 			Dir:          true,
 			Path:         "static/icon",
 			CacheControl: "public, max-age=31536000, no-cache",
-			ETagStrong:   true,
 		},
 		{
 			Prefix:       "/static/",
 			Dir:          true,
 			Path:         "static",
 			CacheControl: "public, max-age=31536000, immutable",
-			ETagStrong:   true,
 			Compressed: []Compressed{
 				{
 					Code:   "gzip",
@@ -181,6 +195,14 @@ func TestServer(t *testing.T) {
 			},
 		},
 		{
+			Prefix: "/bogus",
+			Path:   "bogus",
+		},
+		{
+			Prefix: "/subdir",
+			Path:   "subdir",
+		},
+		{
 			Prefix:       "/",
 			Path:         "index.html",
 			CacheControl: "public, max-age=31536000, no-cache",
@@ -206,6 +228,7 @@ func TestServer(t *testing.T) {
 		Body       string
 		Compressed bool
 		RealIP     string
+		OtherLogs  []string
 	}{
 		{
 			Path: "/static/icon/someicon.png",
@@ -276,6 +299,51 @@ func TestServer(t *testing.T) {
 			},
 			Body:       `this is a test index html file`,
 			Compressed: true,
+			RealIP:     "10.0.0.2",
+		},
+		{
+			Path:       "/static/fileunknownext",
+			RemoteAddr: "10.0.0.2:1234",
+			Status:     http.StatusOK,
+			ResHeaders: map[string]string{
+				headerCacheControl: "public, max-age=31536000, immutable",
+				headerContentType:  "text/html; charset=utf-8",
+			},
+			Body:       `<!DOCTYPE HTML>`,
+			Compressed: false,
+			RealIP:     "10.0.0.2",
+		},
+		{
+			Path:       "/static/bogus",
+			RemoteAddr: "10.0.0.2:1234",
+			Status:     http.StatusNotFound,
+			RealIP:     "10.0.0.2",
+			OtherLogs:  []string{"Failed to stat file"},
+		},
+		{
+			Path:       "/bogus",
+			RemoteAddr: "10.0.0.2:1234",
+			Status:     http.StatusNotFound,
+			RealIP:     "10.0.0.2",
+			OtherLogs:  []string{"Failed to stat file"},
+		},
+		{
+			Path:       "/subdir",
+			RemoteAddr: "10.0.0.2:1234",
+			Status:     http.StatusNotFound,
+			RealIP:     "10.0.0.2",
+			OtherLogs:  []string{"is a directory"},
+		},
+		{
+			Path:       "/static/test.html",
+			RemoteAddr: "10.0.0.2:1234",
+			Status:     http.StatusOK,
+			ResHeaders: map[string]string{
+				headerCacheControl: "public, max-age=31536000, immutable",
+				headerContentType:  "text/html; charset=utf-8",
+			},
+			Body:       `sample html file`,
+			Compressed: false,
 			RealIP:     "10.0.0.2",
 		},
 	} {
@@ -349,6 +417,18 @@ func TestServer(t *testing.T) {
 				{
 					Level:  klog.LevelInfo.String(),
 					Msg:    "Handle route",
+					Prefix: "/bogus",
+					FSPath: "bogus",
+				},
+				{
+					Level:  klog.LevelInfo.String(),
+					Msg:    "Handle route",
+					Prefix: "/subdir",
+					FSPath: "subdir",
+				},
+				{
+					Level:  klog.LevelInfo.String(),
+					Msg:    "Handle route",
 					Prefix: "/",
 					FSPath: "index.html",
 				},
@@ -384,7 +464,7 @@ func TestServer(t *testing.T) {
 					rec := httptest.NewRecorder()
 					server.ServeHTTP(rec, req)
 
-					checkHTTPLog(t, jdec, tc.Path, tc.RemoteAddr, tc.RealIP, tc.Status)
+					checkHTTPLog(t, jdec, tc.Path, tc.RemoteAddr, tc.RealIP, tc.Status, tc.OtherLogs)
 
 					assert.Equal(tc.Status, rec.Code)
 
@@ -400,12 +480,12 @@ func TestServer(t *testing.T) {
 						for _, i := range []string{
 							headerCacheControl,
 							headerContentEncoding,
-							headerContentType,
 							headerETag,
 							headerVary,
 						} {
 							assert.Equal("", rec.HeaderMap.Get(i))
 						}
+						assert.Equal("text/plain; charset=utf-8", rec.HeaderMap.Get(headerContentType))
 						return
 					}
 
@@ -424,7 +504,7 @@ func TestServer(t *testing.T) {
 					rec := httptest.NewRecorder()
 					server.ServeHTTP(rec, req)
 
-					checkHTTPLog(t, jdec, tc.Path, tc.RemoteAddr, tc.RealIP, http.StatusNotModified)
+					checkHTTPLog(t, jdec, tc.Path, tc.RemoteAddr, tc.RealIP, http.StatusNotModified, tc.OtherLogs)
 
 					assert.Equal(http.StatusNotModified, rec.Code)
 					for _, i := range []string{
@@ -450,7 +530,7 @@ func TestServer(t *testing.T) {
 					rec := httptest.NewRecorder()
 					server.ServeHTTP(rec, req)
 
-					checkHTTPLog(t, jdec, tc.Path, tc.RemoteAddr, tc.RealIP, tc.Status)
+					checkHTTPLog(t, jdec, tc.Path, tc.RemoteAddr, tc.RealIP, tc.Status, tc.OtherLogs)
 
 					assert.Equal(tc.Status, rec.Code)
 					for k, v := range tc.ResHeaders {
@@ -461,12 +541,12 @@ func TestServer(t *testing.T) {
 						for _, i := range []string{
 							headerCacheControl,
 							headerContentEncoding,
-							headerContentType,
 							headerETag,
 							headerVary,
 						} {
 							assert.Equal("", rec.HeaderMap.Get(i))
 						}
+						assert.Equal("text/plain; charset=utf-8", rec.HeaderMap.Get(headerContentType))
 						return
 					}
 
@@ -498,7 +578,7 @@ func TestServer(t *testing.T) {
 					rec := httptest.NewRecorder()
 					server.ServeHTTP(rec, req)
 
-					checkHTTPLog(t, jdec, tc.Path, tc.RemoteAddr, tc.RealIP, http.StatusNotModified)
+					checkHTTPLog(t, jdec, tc.Path, tc.RemoteAddr, tc.RealIP, http.StatusNotModified, tc.OtherLogs)
 
 					assert.Equal(http.StatusNotModified, rec.Code)
 					for _, i := range []string{
@@ -524,7 +604,7 @@ func TestServer(t *testing.T) {
 					rec := httptest.NewRecorder()
 					server.ServeHTTP(rec, req)
 
-					checkHTTPLog(t, jdec, tc.Path, tc.RemoteAddr, tc.RealIP, tc.Status)
+					checkHTTPLog(t, jdec, tc.Path, tc.RemoteAddr, tc.RealIP, tc.Status, tc.OtherLogs)
 
 					assert.Equal(tc.Status, rec.Code)
 					for k, v := range tc.ResHeaders {
@@ -535,12 +615,12 @@ func TestServer(t *testing.T) {
 						for _, i := range []string{
 							headerCacheControl,
 							headerContentEncoding,
-							headerContentType,
 							headerETag,
 							headerVary,
 						} {
 							assert.Equal("", rec.HeaderMap.Get(i))
 						}
+						assert.Equal("text/plain; charset=utf-8", rec.HeaderMap.Get(headerContentType))
 						return
 					}
 
@@ -567,7 +647,7 @@ func TestServer(t *testing.T) {
 					rec := httptest.NewRecorder()
 					server.ServeHTTP(rec, req)
 
-					checkHTTPLog(t, jdec, tc.Path, tc.RemoteAddr, tc.RealIP, http.StatusNotModified)
+					checkHTTPLog(t, jdec, tc.Path, tc.RemoteAddr, tc.RealIP, http.StatusNotModified, tc.OtherLogs)
 
 					assert.Equal(http.StatusNotModified, rec.Code)
 					for _, i := range []string{
