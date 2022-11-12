@@ -563,7 +563,7 @@ func (s *Server) Serve(ctx context.Context, port int, opts Opts) {
 	})
 	s.waitForInterrupt(ctx)
 	cancel()
-	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, opts.GracefulShutdown)
+	shutdownCtx, shutdownCancel := context.WithTimeout(klog.ExtendCtx(context.Background(), ctx, nil), opts.GracefulShutdown)
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		s.log.Err(context.Background(), kerrors.WithMsg(err, "Failed to shut down server"), nil)
