@@ -468,12 +468,8 @@ func TestServer(t *testing.T) {
 
 					assert.Equal(tc.Status, rec.Code)
 
-					for k, v := range rec.HeaderMap {
-						t.Log(k, v)
-					}
-
 					for k, v := range tc.ResHeaders {
-						assert.Equal(v, rec.HeaderMap.Get(k))
+						assert.Equal(v, rec.Result().Header.Get(k))
 					}
 
 					if tc.Status != http.StatusOK {
@@ -483,15 +479,15 @@ func TestServer(t *testing.T) {
 							headerETag,
 							headerVary,
 						} {
-							assert.Equal("", rec.HeaderMap.Get(i))
+							assert.Equal("", rec.Result().Header.Get(i))
 						}
-						assert.Equal("text/plain; charset=utf-8", rec.HeaderMap.Get(headerContentType))
+						assert.Equal("text/plain; charset=utf-8", rec.Result().Header.Get(headerContentType))
 						return
 					}
 
 					assert.Equal(tc.Body, rec.Body.String())
 
-					etag = rec.HeaderMap.Get(headerETag)
+					etag = rec.Result().Header.Get(headerETag)
 					assert.True(etag != "")
 				}
 				{
@@ -514,7 +510,7 @@ func TestServer(t *testing.T) {
 						headerETag,
 						headerVary,
 					} {
-						assert.Equal("", rec.HeaderMap.Get(i))
+						assert.Equal("", rec.Result().Header.Get(i))
 					}
 				}
 			}()
@@ -534,7 +530,7 @@ func TestServer(t *testing.T) {
 
 					assert.Equal(tc.Status, rec.Code)
 					for k, v := range tc.ResHeaders {
-						assert.Equal(v, rec.HeaderMap.Get(k))
+						assert.Equal(v, rec.Result().Header.Get(k))
 					}
 
 					if tc.Status != http.StatusOK {
@@ -544,19 +540,19 @@ func TestServer(t *testing.T) {
 							headerETag,
 							headerVary,
 						} {
-							assert.Equal("", rec.HeaderMap.Get(i))
+							assert.Equal("", rec.Result().Header.Get(i))
 						}
-						assert.Equal("text/plain; charset=utf-8", rec.HeaderMap.Get(headerContentType))
+						assert.Equal("text/plain; charset=utf-8", rec.Result().Header.Get(headerContentType))
 						return
 					}
 
 					if !tc.Compressed {
-						assert.Equal("", rec.HeaderMap.Get(headerContentEncoding))
+						assert.Equal("", rec.Result().Header.Get(headerContentEncoding))
 						assert.Equal(tc.Body, rec.Body.String())
 						return
 					}
 
-					assert.Equal("gzip", rec.HeaderMap.Get(headerContentEncoding))
+					assert.Equal("gzip", rec.Result().Header.Get(headerContentEncoding))
 					gr, err := gzip.NewReader(rec.Body)
 					assert.NoError(err)
 					var b bytes.Buffer
@@ -564,7 +560,7 @@ func TestServer(t *testing.T) {
 					assert.NoError(err)
 					assert.Equal(tc.Body, b.String())
 
-					etag = rec.HeaderMap.Get(headerETag)
+					etag = rec.Result().Header.Get(headerETag)
 					assert.True(etag != "")
 				}
 				{
@@ -588,7 +584,7 @@ func TestServer(t *testing.T) {
 						headerETag,
 						headerVary,
 					} {
-						assert.Equal("", rec.HeaderMap.Get(i))
+						assert.Equal("", rec.Result().Header.Get(i))
 					}
 				}
 			}()
@@ -608,7 +604,7 @@ func TestServer(t *testing.T) {
 
 					assert.Equal(tc.Status, rec.Code)
 					for k, v := range tc.ResHeaders {
-						assert.Equal(v, rec.HeaderMap.Get(k))
+						assert.Equal(v, rec.Result().Header.Get(k))
 					}
 
 					if tc.Status != http.StatusOK {
@@ -618,22 +614,22 @@ func TestServer(t *testing.T) {
 							headerETag,
 							headerVary,
 						} {
-							assert.Equal("", rec.HeaderMap.Get(i))
+							assert.Equal("", rec.Result().Header.Get(i))
 						}
-						assert.Equal("text/plain; charset=utf-8", rec.HeaderMap.Get(headerContentType))
+						assert.Equal("text/plain; charset=utf-8", rec.Result().Header.Get(headerContentType))
 						return
 					}
 
 					if !tc.Compressed {
-						assert.Equal("", rec.HeaderMap.Get(headerContentEncoding))
+						assert.Equal("", rec.Result().Header.Get(headerContentEncoding))
 						assert.Equal(tc.Body, rec.Body.String())
 						return
 					}
 
-					assert.Equal("", rec.HeaderMap.Get(headerContentEncoding))
+					assert.Equal("", rec.Result().Header.Get(headerContentEncoding))
 					assert.Equal(tc.Body, rec.Body.String())
 
-					etag = rec.HeaderMap.Get(headerETag)
+					etag = rec.Result().Header.Get(headerETag)
 					assert.True(etag != "")
 				}
 				{
@@ -657,7 +653,7 @@ func TestServer(t *testing.T) {
 						headerETag,
 						headerVary,
 					} {
-						assert.Equal("", rec.HeaderMap.Get(i))
+						assert.Equal("", rec.Result().Header.Get(i))
 					}
 				}
 			}()
