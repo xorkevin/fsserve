@@ -21,7 +21,6 @@ import (
 type (
 	mountLog struct {
 		Level    string `json:"level"`
-		Path     string `json:"path"`
 		Msg      string `json:"msg"`
 		Prefix   string `json:"route.prefix"`
 		FSPath   string `json:"route.fspath"`
@@ -33,7 +32,6 @@ type (
 
 	httpLog struct {
 		Level   string `json:"level"`
-		Path    string `json:"path"`
 		Msg     string `json:"msg"`
 		Host    string `json:"http.host"`
 		Method  string `json:"http.method"`
@@ -96,7 +94,7 @@ func TestServer(t *testing.T) {
 	assert := require.New(t)
 
 	now := time.Now()
-	var filemode fs.FileMode = 0644
+	var filemode fs.FileMode = 0o644
 
 	fsys := fstest.MapFS{
 		"static/icon/someicon.png": &fstest.MapFile{
@@ -354,7 +352,7 @@ func TestServer(t *testing.T) {
 			assert := require.New(t)
 
 			var logb bytes.Buffer
-			server := NewServer(klog.New(klog.OptSerializer(klog.NewJSONSerializer(klog.NewSyncWriter(&logb)))), fsys, Config{
+			server := NewServer(klog.New(klog.OptHandler(klog.NewJSONSlogHandler(klog.NewSyncWriter(&logb)))), fsys, Config{
 				Instance: "testinstance",
 				Proxies: []netip.Prefix{
 					netip.MustParsePrefix("10.0.0.0/8"),
@@ -667,7 +665,7 @@ func TestServer(t *testing.T) {
 		assert := require.New(t)
 
 		var logb bytes.Buffer
-		server := NewServer(klog.New(klog.OptSerializer(klog.NewJSONSerializer(klog.NewSyncWriter(&logb)))), fsys, Config{
+		server := NewServer(klog.New(klog.OptHandler(klog.NewJSONSlogHandler(klog.NewSyncWriter(&logb)))), fsys, Config{
 			Instance: "testinstance",
 		})
 

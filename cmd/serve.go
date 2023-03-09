@@ -47,12 +47,12 @@ func (c *Cmd) getServeCmd() *cobra.Command {
 }
 
 func (c *Cmd) logFatal(err error) {
-	c.log.Err(context.Background(), err, nil)
+	c.log.Err(context.Background(), err)
 	os.Exit(1)
 }
 
 func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
-	c.log = klog.NewLevelLogger(klog.New(klog.OptSerializer(klog.NewJSONSerializer(klog.NewSyncWriter(os.Stderr)))))
+	c.log = klog.NewLevelLogger(klog.New(klog.OptHandler(klog.NewJSONSlogHandler(klog.NewSyncWriter(os.Stderr)))))
 
 	var mimeTypes []serve.MimeType
 	if err := viper.UnmarshalKey("exttotype", &mimeTypes); err != nil {
@@ -61,9 +61,9 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 	if err := serve.AddMimeTypes(mimeTypes); err != nil {
 		c.logFatal(kerrors.WithMsg(err, "Failed to set ext to mime types"))
 	}
-	c.log.Info(context.Background(), "Added ext mime types", klog.Fields{
-		"mimetypes": mimeTypes,
-	})
+	c.log.Info(context.Background(), "Added ext mime types",
+		klog.AAny("mimetypes", mimeTypes),
+	)
 
 	var routes []serve.Route
 	if err := viper.UnmarshalKey("routes", &routes); err != nil {
@@ -84,9 +84,9 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 		}
 		proxies = append(proxies, k)
 	}
-	c.log.Info(context.Background(), "Trusted proxies", klog.Fields{
-		"realip.proxies": proxystrs,
-	})
+	c.log.Info(context.Background(), "Trusted proxies",
+		klog.AAny("realip.proxies", proxystrs),
+	)
 
 	base := c.serveFlags.base
 	if base == "" {
@@ -95,9 +95,9 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 	if base == "" {
 		base = "."
 	}
-	c.log.Info(context.Background(), "Serving directory at base", klog.Fields{
-		"fs.base": base,
-	})
+	c.log.Info(context.Background(), "Serving directory at base",
+		klog.AString("fs.base", base),
+	)
 
 	rootSys := os.DirFS(base)
 	s := serve.NewServer(c.log.Logger, rootSys, serve.Config{
@@ -125,7 +125,7 @@ const (
 func (c *Cmd) readDurationConfig(s string, d time.Duration) time.Duration {
 	t, err := time.ParseDuration(s)
 	if err != nil {
-		c.log.WarnErr(context.Background(), kerrors.WithMsg(err, fmt.Sprintf("Invalid config time value: %s", s)), nil)
+		c.log.WarnErr(context.Background(), kerrors.WithMsg(err, fmt.Sprintf("Invalid config time value: %s", s)))
 		return d
 	}
 	return t
@@ -145,18 +145,18 @@ func (c *Cmd) readBytesConfig(s string, d int) int {
 	i := strings.IndexFunc(s, unicode.IsLetter)
 
 	if i < 0 {
-		c.log.WarnErr(context.Background(), kerrors.WithMsg(nil, fmt.Sprintf("Invalid config bytes value: %s", s)), nil)
+		c.log.WarnErr(context.Background(), kerrors.WithMsg(nil, fmt.Sprintf("Invalid config bytes value: %s", s)))
 		return d
 	}
 
 	bytesString, multiple := b[:i], b[i:]
 	bytes, err := strconv.Atoi(bytesString)
 	if err != nil {
-		c.log.WarnErr(context.Background(), kerrors.WithMsg(err, fmt.Sprintf("Invalid config bytes value: %s", s)), nil)
+		c.log.WarnErr(context.Background(), kerrors.WithMsg(err, fmt.Sprintf("Invalid config bytes value: %s", s)))
 		return d
 	}
 	if bytes < 0 {
-		c.log.WarnErr(context.Background(), kerrors.WithMsg(nil, fmt.Sprintf("Invalid config bytes value: %s", s)), nil)
+		c.log.WarnErr(context.Background(), kerrors.WithMsg(nil, fmt.Sprintf("Invalid config bytes value: %s", s)))
 		return d
 	}
 
@@ -170,7 +170,7 @@ func (c *Cmd) readBytesConfig(s string, d int) int {
 	case "B":
 		return bytes
 	default:
-		c.log.WarnErr(context.Background(), kerrors.WithMsg(nil, fmt.Sprintf("Invalid config bytes value: %s", s)), nil)
+		c.log.WarnErr(context.Background(), kerrors.WithMsg(nil, fmt.Sprintf("Invalid config bytes value: %s", s)))
 		return d
 	}
 }

@@ -122,9 +122,9 @@ func writeError(ctx context.Context, log *klog.LevelLogger, w http.ResponseWrite
 	status := getFSErrorStatus(err)
 
 	if status >= http.StatusBadRequest && status < http.StatusInternalServerError {
-		log.WarnErr(ctx, err, nil)
+		log.WarnErr(ctx, err)
 	} else {
-		log.Err(ctx, err, nil)
+		log.Err(ctx, err)
 	}
 
 	headers := w.Header()
@@ -174,7 +174,7 @@ func readFileBuf(ctx context.Context, log *klog.LevelLogger, fsys fs.FS, name st
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			log.Err(ctx, kerrors.WithMsg(err, fmt.Sprintf("Failed to close open file %s", name)), nil)
+			log.Err(ctx, kerrors.WithMsg(err, fmt.Sprintf("Failed to close open file %s", name)))
 		}
 	}()
 	n, err := io.ReadFull(f, buf)
@@ -281,7 +281,7 @@ func serveFile(ctx context.Context, log *klog.LevelLogger, w http.ResponseWriter
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			log.Err(ctx, kerrors.WithMsg(err, fmt.Sprintf("Failed to close open file %s", p)), nil)
+			log.Err(ctx, kerrors.WithMsg(err, fmt.Sprintf("Failed to close open file %s", p)))
 		}
 	}()
 	stat, err := f.Stat()
@@ -330,22 +330,20 @@ func (s *Server) Mount(routes []Route) error {
 	rootHTTPSys := http.FS(s.rootSys)
 	for _, i := range routes {
 		k := i
-		ctx := klog.WithFields(context.Background(), klog.Fields{
-			"route.prefix": k.Prefix,
-		})
-		s.log.Info(ctx, "Handle route", klog.Fields{
-			"route.fspath": k.Path,
-			"route.dir":    k.Dir,
-		})
+		ctx := klog.CtxWithAttrs(context.Background(), klog.AString("route.prefix", k.Prefix))
+		s.log.Info(ctx, "Handle route",
+			klog.AString("route.fspath", k.Path),
+			klog.ABool("route.dir", k.Dir),
+		)
 		compressed := make([]Compressed, 0, len(k.Compressed))
 		for _, j := range k.Compressed {
 			if j.regex == nil {
 				if j.Test == "" {
 					compressed = append(compressed, j)
-					s.log.Info(ctx, "Compressed", klog.Fields{
-						"compressed.encoding": j.Code,
-						"compressed.suffix":   j.Suffix,
-					})
+					s.log.Info(ctx, "Compressed",
+						klog.AString("compressed.encoding", j.Code),
+						klog.AString("compressed.suffix", j.Suffix),
+					)
 					continue
 				}
 				r, err := regexp.Compile(j.Test)
@@ -354,17 +352,15 @@ func (s *Server) Mount(routes []Route) error {
 				}
 				j.regex = r
 				compressed = append(compressed, j)
-				s.log.Info(ctx, "Compressed", klog.Fields{
-					"compressed.encoding": j.Code,
-					"compressed.test":     r.String(),
-					"compressed.suffix":   j.Suffix,
-				})
+				s.log.Info(ctx, "Compressed",
+					klog.AString("compressed.encoding", j.Code),
+					klog.AString("compressed.test", r.String()),
+					klog.AString("compressed.suffix", j.Suffix),
+				)
 			}
 		}
 		k.Compressed = compressed
-		log := klog.NewLevelLogger(klog.Sub(s.log.Logger, "router", klog.Fields{
-			"router.path": k.Prefix,
-		}))
+		log := klog.NewLevelLogger(s.log.Logger.Sublogger("router", klog.AString("router.path", k.Prefix)))
 		if k.Dir {
 			fsys, err := fs.Sub(s.rootSys, k.Path)
 			if err != nil {
@@ -432,9 +428,7 @@ func ipnetsContain(ip netip.Addr, ipnet []netip.Prefix) bool {
 	return false
 }
 
-var (
-	base32RawHexEncoding = base32.HexEncoding.WithPadding(base32.NoPadding)
-)
+var base32RawHexEncoding = base32.HexEncoding.WithPadding(base32.NoPadding)
 
 const (
 	timeSize = 8
@@ -499,12 +493,10 @@ func (w *serverResponseWriter) Write(p []byte) (int, error) {
 	return w.ResponseWriter.Write(p)
 }
 
-var (
-	allowedHTTPMethods = map[string]struct{}{
-		http.MethodGet:  {},
-		http.MethodHead: {},
-	}
-)
+var allowedHTTPMethods = map[string]struct{}{
+	http.MethodGet:  {},
+	http.MethodHead: {},
+}
 
 func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	if _, ok := allowedHTTPMethods[r.Method]; !ok {
@@ -518,27 +510,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	lreqid := s.lreqID()
 	realip := getRealIP(r, s.config.Proxies)
-	ctx = klog.WithFields(ctx, klog.Fields{
-		"http.host":    r.Host,
-		"http.method":  r.Method,
-		"http.reqpath": r.URL.EscapedPath(),
-		"http.remote":  r.RemoteAddr,
-		"http.realip":  realip,
-		"http.lreqid":  lreqid,
-	})
+	ctx = klog.CtxWithAttrs(ctx,
+		klog.AString("http.host", r.Host),
+		klog.AString("http.method", r.Method),
+		klog.AString("http.reqpath", r.URL.EscapedPath()),
+		klog.AString("http.remote", r.RemoteAddr),
+		klog.AString("http.realip", realip),
+		klog.AString("http.lreqid", lreqid),
+	)
 	r = r.WithContext(ctx)
 	w2 := &serverResponseWriter{
 		ResponseWriter: w,
 		status:         0,
 	}
-	s.log.Info(ctx, "HTTP request", nil)
+	s.log.Info(ctx, "HTTP request")
 	start := time.Now()
 	s.handleHTTP(w2, r)
 	duration := time.Since(start)
-	s.log.Info(ctx, "HTTP response", klog.Fields{
-		"http.status":     w2.status,
-		"http.latency_us": duration.Microseconds(),
-	})
+	s.log.Info(ctx, "HTTP response",
+		klog.AInt("http.status", w2.status),
+		klog.AInt64("http.latency_us", duration.Microseconds()),
+	)
 }
 
 func (s *Server) Serve(ctx context.Context, port int, opts Opts) {
@@ -555,18 +547,18 @@ func (s *Server) Serve(ctx context.Context, port int, opts Opts) {
 	go func() {
 		defer cancel()
 		if err := srv.ListenAndServe(); err != nil {
-			s.log.Err(context.Background(), kerrors.WithMsg(err, "Shutting down server"), nil)
+			s.log.Err(context.Background(), kerrors.WithMsg(err, "Shutting down server"))
 		}
 	}()
-	s.log.Info(context.Background(), "HTTP server listening", klog.Fields{
-		"http.server.addr": srv.Addr,
-	})
+	s.log.Info(context.Background(), "HTTP server listening",
+		klog.AString("http.server.addr", srv.Addr),
+	)
 	s.waitForInterrupt(ctx)
 	cancel()
-	shutdownCtx, shutdownCancel := context.WithTimeout(klog.ExtendCtx(context.Background(), ctx, nil), opts.GracefulShutdown)
+	shutdownCtx, shutdownCancel := context.WithTimeout(klog.ExtendCtx(context.Background(), ctx), opts.GracefulShutdown)
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		s.log.Err(context.Background(), kerrors.WithMsg(err, "Failed to shut down server"), nil)
+		s.log.Err(context.Background(), kerrors.WithMsg(err, "Failed to shut down server"))
 	}
 }
 
