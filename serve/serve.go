@@ -230,7 +230,6 @@ func detectCompression(ctx context.Context, w http.ResponseWriter, headers http.
 		}
 
 		w.Header().Set(headerContentEncoding, j.Code)
-		w.Header().Add(headerVary, headerAcceptEncoding)
 		return compressedPath, nil
 	}
 	return origPath, nil
@@ -251,6 +250,11 @@ func detectFilepath(
 		writeError(ctx, log, w, err)
 		return "", nil, true
 	}
+
+	// According to RFC7232 section 4.1, server must send same Cache-Control,
+	// Content-Location, Date, ETag, Expires, and Vary headers for 304 response
+	// as 200 response.
+	w.Header().Set(headerVary, headerAcceptEncoding)
 
 	if notModified := writeCacheHeaders(w, headers, stat, cachecontrol); notModified {
 		w.WriteHeader(http.StatusNotModified)
