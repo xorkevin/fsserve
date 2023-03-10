@@ -230,7 +230,7 @@ func detectCompression(ctx context.Context, w http.ResponseWriter, headers http.
 		}
 
 		w.Header().Set(headerContentEncoding, j.Code)
-		w.Header().Add(headerVary, headerContentEncoding)
+		w.Header().Add(headerVary, headerAcceptEncoding)
 		return compressedPath, nil
 	}
 	return origPath, nil
