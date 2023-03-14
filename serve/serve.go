@@ -12,8 +12,6 @@ import (
 	"mime"
 	"net/http"
 	"net/netip"
-	"os"
-	"os/signal"
 	"path"
 	"regexp"
 	"strconv"
@@ -557,17 +555,10 @@ func (s *Server) Serve(ctx context.Context, port int, opts Opts) {
 	s.log.Info(context.Background(), "HTTP server listening",
 		klog.AString("http.server.addr", srv.Addr),
 	)
-	s.waitForInterrupt(ctx)
-	cancel()
+	<-ctx.Done()
 	shutdownCtx, shutdownCancel := context.WithTimeout(klog.ExtendCtx(context.Background(), ctx), opts.GracefulShutdown)
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		s.log.Err(context.Background(), kerrors.WithMsg(err, "Failed to shut down server"))
 	}
-}
-
-func (s *Server) waitForInterrupt(ctx context.Context) {
-	notifyCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
-	defer stop()
-	<-notifyCtx.Done()
 }

@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -107,14 +110,36 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 	if err := s.Mount(routes); err != nil {
 		c.logFatal(kerrors.WithMsg(err, "Failed to mount server routes"))
 	}
-	s.Serve(context.Background(), c.serveFlags.port, serve.Opts{
+	opts := serve.Opts{
 		ReadTimeout:       c.readDurationConfig(viper.GetString("maxconnread"), seconds5),
 		ReadHeaderTimeout: c.readDurationConfig(viper.GetString("maxconnheader"), seconds2),
 		WriteTimeout:      c.readDurationConfig(viper.GetString("maxconnwrite"), seconds5),
 		IdleTimeout:       c.readDurationConfig(viper.GetString("maxconnidle"), seconds5),
 		MaxHeaderBytes:    c.readBytesConfig(viper.GetString("maxheadersize"), MEGABYTE),
 		GracefulShutdown:  c.readDurationConfig(viper.GetString("gracefulshutdown"), seconds5),
-	})
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer cancel()
+		s.Serve(ctx, c.serveFlags.port, opts)
+	}()
+
+	waitForInterrupt(ctx)
+
+	cancel()
+	wg.Wait()
+}
+
+func waitForInterrupt(ctx context.Context) {
+	notifyCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	<-notifyCtx.Done()
 }
 
 const (

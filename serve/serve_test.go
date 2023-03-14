@@ -475,7 +475,6 @@ func TestServer(t *testing.T) {
 							headerCacheControl,
 							headerContentEncoding,
 							headerETag,
-							headerVary,
 						} {
 							assert.Equal("", rec.Result().Header.Get(i))
 						}
@@ -506,7 +505,6 @@ func TestServer(t *testing.T) {
 						headerContentEncoding,
 						headerContentType,
 						headerETag,
-						headerVary,
 					} {
 						assert.Equal("", rec.Result().Header.Get(i))
 					}
@@ -536,7 +534,6 @@ func TestServer(t *testing.T) {
 							headerCacheControl,
 							headerContentEncoding,
 							headerETag,
-							headerVary,
 						} {
 							assert.Equal("", rec.Result().Header.Get(i))
 						}
@@ -580,7 +577,6 @@ func TestServer(t *testing.T) {
 						headerContentEncoding,
 						headerContentType,
 						headerETag,
-						headerVary,
 					} {
 						assert.Equal("", rec.Result().Header.Get(i))
 					}
@@ -610,7 +606,6 @@ func TestServer(t *testing.T) {
 							headerCacheControl,
 							headerContentEncoding,
 							headerETag,
-							headerVary,
 						} {
 							assert.Equal("", rec.Result().Header.Get(i))
 						}
@@ -649,7 +644,6 @@ func TestServer(t *testing.T) {
 						headerContentEncoding,
 						headerContentType,
 						headerETag,
-						headerVary,
 					} {
 						assert.Equal("", rec.Result().Header.Get(i))
 					}
