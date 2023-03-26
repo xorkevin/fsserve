@@ -165,14 +165,14 @@ const (
 	sniffLen = 512
 )
 
-func readFileBuf(ctx context.Context, log *klog.LevelLogger, fsys fs.FS, name string, buf []byte) (int, error) {
+func readFileBuf(fsys fs.FS, name string, buf []byte) (_ int, retErr error) {
 	f, err := fsys.Open(name)
 	if err != nil {
 		return 0, kerrors.WithMsg(err, fmt.Sprintf("Failed to open file %s", name))
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			log.Err(ctx, kerrors.WithMsg(err, fmt.Sprintf("Failed to close open file %s", name)))
+			retErr = errors.Join(retErr, kerrors.WithMsg(err, fmt.Sprintf("Failed to close open file %s", name)))
 		}
 	}()
 	n, err := io.ReadFull(f, buf)
@@ -182,14 +182,14 @@ func readFileBuf(ctx context.Context, log *klog.LevelLogger, fsys fs.FS, name st
 	return n, nil
 }
 
-func detectContentType(ctx context.Context, log *klog.LevelLogger, w http.ResponseWriter, fsys fs.FS, name string) error {
+func detectContentType(w http.ResponseWriter, fsys fs.FS, name string) error {
 	if w.Header().Get(headerContentType) != "" {
 		return nil
 	}
 	ctype := mime.TypeByExtension(path.Ext(name))
 	if ctype == "" {
 		var buf [sniffLen]byte
-		n, err := readFileBuf(ctx, log, fsys, name, buf[:])
+		n, err := readFileBuf(fsys, name, buf[:])
 		if err != nil {
 			return err
 		}
@@ -261,7 +261,7 @@ func detectFilepath(
 
 	// need to detect content type on original path since mime.TypeByExtension
 	// and http.DetectContentType does not handle .gz, .br, etc.
-	if err := detectContentType(ctx, log, w, fsys, origPath); err != nil {
+	if err := detectContentType(w, fsys, origPath); err != nil {
 		writeError(ctx, log, w, err)
 		return "", nil, true
 	}
