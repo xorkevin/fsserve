@@ -7,7 +7,7 @@ require (
 	github.com/spf13/viper v1.15.0
 	github.com/stretchr/testify v1.8.2
 	xorkevin.dev/kerrors v0.1.5
-	xorkevin.dev/klog v0.0.0-20230408090513-cffae1892d50
+	xorkevin.dev/klog v0.0.0-20230409052311-08b959cc2a77
 )
 
 require (

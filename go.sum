@@ -488,5 +488,5 @@ rsc.io/quote/v3 v3.1.0/go.mod h1:yEA65RcK8LyAZtP9Kv3t0HmxON59tX3rD+tICJqUlj0=
 rsc.io/sampler v1.3.0/go.mod h1:T1hPZKmBbMNahiBKFy5HrXp6adAjACjK9JXDnKaTXpA=
 xorkevin.dev/kerrors v0.1.5 h1:vszMcLbQjGn2DuqaQZNZNTbGw17qKvfH3X6E1s+1Iac=
 xorkevin.dev/kerrors v0.1.5/go.mod h1:HnfCCdUvvu5aXhHxO8TPa8KU3r5X2c2QZRbfE+HBLvc=
-xorkevin.dev/klog v0.0.0-20230408090513-cffae1892d50 h1:Fl03DGJlfyY+sGaLkrbdjH9rCh2S7Yr4vIJkqIys6SQ=
-xorkevin.dev/klog v0.0.0-20230408090513-cffae1892d50/go.mod h1:XTsNnpqNMRoy1t7q6LShju8vI5p/439F27BvJxokqws=
+xorkevin.dev/klog v0.0.0-20230409052311-08b959cc2a77 h1:dlVTe31lOSpCQwCnzgpdD0lF1dSQdEoUCOPtXayguQM=
+xorkevin.dev/klog v0.0.0-20230409052311-08b959cc2a77/go.mod h1:XTsNnpqNMRoy1t7q6LShju8vI5p/439F27BvJxokqws=
