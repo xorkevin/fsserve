@@ -49,20 +49,15 @@ func (c *Cmd) getServeCmd() *cobra.Command {
 	return serveCmd
 }
 
-func (c *Cmd) logFatal(err error) {
-	c.log.Err(context.Background(), err)
-	os.Exit(1)
-}
-
 func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
-	c.log = klog.NewLevelLogger(klog.New(klog.OptHandler(klog.NewJSONSlogHandler(klog.NewSyncWriter(os.Stderr)))))
-
 	var mimeTypes []serve.MimeType
 	if err := viper.UnmarshalKey("exttotype", &mimeTypes); err != nil {
 		c.logFatal(kerrors.WithMsg(err, "Failed to read config exttotype"))
+		return
 	}
 	if err := serve.AddMimeTypes(mimeTypes); err != nil {
 		c.logFatal(kerrors.WithMsg(err, "Failed to set ext to mime types"))
+		return
 	}
 	c.log.Info(context.Background(), "Added ext mime types",
 		klog.AAny("mimetypes", mimeTypes),
@@ -71,11 +66,13 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 	var routes []serve.Route
 	if err := viper.UnmarshalKey("routes", &routes); err != nil {
 		c.logFatal(kerrors.WithMsg(err, "Failed to read config routes"))
+		return
 	}
 
 	instance, err := serve.NewSnowflake(8)
 	if err != nil {
 		c.logFatal(kerrors.WithMsg(err, "Failed to generate instance id"))
+		return
 	}
 
 	proxystrs := viper.GetStringSlice("proxies")
@@ -84,6 +81,7 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 		k, err := netip.ParsePrefix(i)
 		if err != nil {
 			c.logFatal(kerrors.WithMsg(err, "Invalid proxy CIDR"))
+			return
 		}
 		proxies = append(proxies, k)
 	}
@@ -109,6 +107,7 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 	})
 	if err := s.Mount(routes); err != nil {
 		c.logFatal(kerrors.WithMsg(err, "Failed to mount server routes"))
+		return
 	}
 	opts := serve.Opts{
 		ReadTimeout:       c.readDurationConfig(viper.GetString("maxconnread"), seconds5),

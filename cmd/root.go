@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"log"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"xorkevin.dev/kerrors"
 	"xorkevin.dev/klog"
 )
 
@@ -21,8 +23,8 @@ type (
 	}
 
 	rootFlags struct {
-		cfgFile   string
-		debugMode bool
+		cfgFile  string
+		logLevel string
 	}
 )
 
@@ -42,7 +44,7 @@ func (c *Cmd) Execute() {
 		DisableAutoGenTag: true,
 	}
 	rootCmd.PersistentFlags().StringVar(&c.rootFlags.cfgFile, "config", "", "config file (default is $XDG_CONFIG_HOME/.fsserve.yaml)")
-	rootCmd.PersistentFlags().BoolVar(&c.rootFlags.debugMode, "debug", false, "turn on debug output")
+	rootCmd.PersistentFlags().StringVar(&c.rootFlags.logLevel, "log-level", "info", "log level")
 	c.rootCmd = rootCmd
 
 	rootCmd.AddCommand(c.getServeCmd())
@@ -50,23 +52,23 @@ func (c *Cmd) Execute() {
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Fatalln(err)
+		return
 	}
 }
 
 // initConfig reads in config file and ENV variables if set.
 func (c *Cmd) initConfig(cmd *cobra.Command, args []string) {
+	c.log = klog.NewLevelLogger(klog.New(
+		klog.OptHandler(klog.NewJSONSlogHandler(klog.NewSyncWriter(os.Stderr))),
+		klog.OptMinLevelStr(c.rootFlags.logLevel),
+	))
+
 	if c.rootFlags.cfgFile != "" {
 		// Use config file from the flag.
 		viper.SetConfigFile(c.rootFlags.cfgFile)
 	} else {
-		viper.SetConfigName(".fsserve")
+		viper.SetConfigName("fsserve")
 		viper.AddConfigPath(".")
-		viper.AddConfigPath("config")
-
-		// Search config in XDG_CONFIG_HOME directory with name ".fsserve" (without extension).
-		if cfgdir, err := os.UserConfigDir(); err == nil {
-			viper.AddConfigPath(cfgdir)
-		}
 	}
 
 	viper.SetEnvPrefix("FSSERVE")
@@ -74,12 +76,14 @@ func (c *Cmd) initConfig(cmd *cobra.Command, args []string) {
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "__"))
 
 	// If a config file is found, read it in.
-	configErr := viper.ReadInConfig()
-	if c.rootFlags.debugMode {
-		if configErr == nil {
-			log.Printf("Using config file: %s\n", viper.ConfigFileUsed())
-		} else {
-			log.Printf("Failed reading config file: %v\n", configErr)
-		}
+	if err := viper.ReadInConfig(); err != nil {
+		c.log.WarnErr(context.Background(), kerrors.WithMsg(err, "Failed reading config"))
+	} else {
+		c.log.Debug(context.Background(), "Read config", klog.AString("file", viper.ConfigFileUsed()))
 	}
+}
+
+func (c *Cmd) logFatal(err error) {
+	c.log.Err(context.Background(), err)
+	os.Exit(1)
 }
