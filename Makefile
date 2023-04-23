@@ -47,7 +47,7 @@ DOCKER_IMAGE=$(DOCKER_NAME):$(DOCKER_VERSION)
 
 .PHONY: build-docker publish-docker docker
 
-build-docker: build
+build-docker:
 	docker build -t $(DOCKER_IMAGE) -t $(DOCKER_MAJOR_IMAGE) -t $(DOCKER_LATEST_IMAGE) .
 
 publish-docker:
