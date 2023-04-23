@@ -36,20 +36,6 @@ vet:
 
 prepare: fmt vet
 
-BIN_NAME=fsserve
-MAIN_PATH=.
-BIN_DIR=./bin
-BIN_PATH=$(BIN_DIR)/$(BIN_NAME)
-
-.PHONY: clean build
-
-clean:
-	if [ -d $(BIN_DIR) ]; then rm -r $(BIN_DIR); fi
-
-build:
-	mkdir -p $(BIN_DIR)
-	CGO_ENABLED=0 go build -trimpath -ldflags "-w -s" -o $(BIN_PATH) $(MAIN_PATH)
-
 DOCKER_NAME=xorkevin/fsserve
 
 DOCKER_MAJOR_VERSION=0.1
