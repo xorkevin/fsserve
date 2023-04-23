@@ -13,7 +13,7 @@ to enable it.  You can execute the following once:
 
 To load completions in your current shell session:
 
-	source <(fsserve completion zsh); compdef _fsserve fsserve
+	source <(fsserve completion zsh)
 
 To load completions for every new session, execute once:
 
@@ -42,8 +42,8 @@ fsserve completion zsh [flags]
 ### Options inherited from parent commands
 
 ```
-      --config string   config file (default is $XDG_CONFIG_HOME/.fsserve.yaml)
-      --debug           turn on debug output
+      --config string      config file (default is $XDG_CONFIG_HOME/.fsserve.json)
+      --log-level string   log level (default "info")
 ```
 
 ### SEE ALSO

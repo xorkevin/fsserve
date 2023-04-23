@@ -9,9 +9,9 @@ A file system http server
 ### Options
 
 ```
-      --config string   config file (default is $XDG_CONFIG_HOME/.fsserve.yaml)
-      --debug           turn on debug output
-  -h, --help            help for fsserve
+      --config string      config file (default is $XDG_CONFIG_HOME/.fsserve.json)
+  -h, --help               help for fsserve
+      --log-level string   log level (default "info")
 ```
 
 ### SEE ALSO

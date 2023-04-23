@@ -16,8 +16,8 @@ generate documentation for fsserve in several formats
 ### Options inherited from parent commands
 
 ```
-      --config string   config file (default is $XDG_CONFIG_HOME/.fsserve.yaml)
-      --debug           turn on debug output
+      --config string      config file (default is $XDG_CONFIG_HOME/.fsserve.json)
+      --log-level string   log level (default "info")
 ```
 
 ### SEE ALSO
