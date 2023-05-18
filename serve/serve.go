@@ -150,13 +150,13 @@ func writeCacheHeaders(w http.ResponseWriter, headers http.Header, stat fs.FileI
 	if cachecontrol != "" {
 		etag := fmt.Sprintf(`W/"%x-%x"`, stat.ModTime().Unix(), stat.Size())
 
-		if v := headers.Get(headerIfNoneMatch); v == etag {
-			return true
-		}
-
 		w.Header().Set(headerCacheControl, cachecontrol)
 		// ETag will also be used by [net/http.ServeContent] to send 304 not modified
 		w.Header().Set(headerETag, etag)
+
+		if v := headers.Get(headerIfNoneMatch); v == etag {
+			return true
+		}
 	}
 	return false
 }
