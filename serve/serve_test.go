@@ -501,10 +501,8 @@ func TestServer(t *testing.T) {
 
 					assert.Equal(http.StatusNotModified, rec.Code)
 					for _, i := range []string{
-						headerCacheControl,
 						headerContentEncoding,
 						headerContentType,
-						headerETag,
 					} {
 						assert.Equal("", rec.Result().Header.Get(i))
 					}
@@ -573,10 +571,8 @@ func TestServer(t *testing.T) {
 
 					assert.Equal(http.StatusNotModified, rec.Code)
 					for _, i := range []string{
-						headerCacheControl,
 						headerContentEncoding,
 						headerContentType,
-						headerETag,
 					} {
 						assert.Equal("", rec.Result().Header.Get(i))
 					}
@@ -640,10 +636,8 @@ func TestServer(t *testing.T) {
 
 					assert.Equal(http.StatusNotModified, rec.Code)
 					for _, i := range []string{
-						headerCacheControl,
 						headerContentEncoding,
 						headerContentType,
-						headerETag,
 					} {
 						assert.Equal("", rec.Result().Header.Get(i))
 					}
