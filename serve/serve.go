@@ -472,27 +472,35 @@ func (s *Server) lreqID() string {
 
 type (
 	serverResponseWriter struct {
-		http.ResponseWriter
+		w           http.ResponseWriter
 		status      int
 		wroteHeader bool
 	}
 )
 
+func (w *serverResponseWriter) Header() http.Header {
+	return w.w.Header()
+}
+
 func (w *serverResponseWriter) WriteHeader(status int) {
 	if w.wroteHeader {
-		w.ResponseWriter.WriteHeader(status)
+		w.w.WriteHeader(status)
 		return
 	}
 	w.status = status
 	w.wroteHeader = true
-	w.ResponseWriter.WriteHeader(status)
+	w.w.WriteHeader(status)
 }
 
 func (w *serverResponseWriter) Write(p []byte) (int, error) {
 	if !w.wroteHeader {
 		w.WriteHeader(http.StatusOK)
 	}
-	return w.ResponseWriter.Write(p)
+	return w.w.Write(p)
+}
+
+func (w *serverResponseWriter) Unwrap() http.ResponseWriter {
+	return w.w
 }
 
 var allowedHTTPMethods = map[string]struct{}{
@@ -522,8 +530,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	)
 	r = r.WithContext(ctx)
 	w2 := &serverResponseWriter{
-		ResponseWriter: w,
-		status:         0,
+		w:      w,
+		status: 0,
 	}
 	s.log.Info(ctx, "HTTP request")
 	start := time.Now()
