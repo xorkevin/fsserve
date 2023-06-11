@@ -5,15 +5,15 @@ import (
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"mime"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"path"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -40,27 +40,13 @@ func AddMimeTypes(mimeTypes []MimeType) error {
 }
 
 type (
-	Compressed struct {
-		Code   string `mapstructure:"code"`
-		Test   string `mapstructure:"test"`
-		Suffix string `mapstructure:"suffix"`
-		regex  *regexp.Regexp
-	}
-
-	Route struct {
-		Prefix       string       `mapstructure:"prefix"`
-		Dir          bool         `mapstructure:"dir"`
-		Path         string       `mapstructure:"path"`
-		CacheControl string       `mapstructure:"cachecontrol"`
-		Compressed   []Compressed `mapstructure:"compressed"`
-	}
-
 	Server struct {
-		log      *klog.LevelLogger
-		rootSys  fs.FS
-		mux      *http.ServeMux
-		config   Config
-		reqcount *atomic.Uint32
+		log        *klog.LevelLogger
+		treeDir    fs.FS
+		contentDir fs.FS
+		mux        *http.ServeMux
+		config     Config
+		reqcount   *atomic.Uint32
 	}
 
 	Config struct {
@@ -78,21 +64,42 @@ type (
 	}
 
 	serverSubdir struct {
-		log     *klog.LevelLogger
-		fsys    fs.FS
-		httpSys http.FileSystem
-		route   Route
+		log        *klog.LevelLogger
+		fsys       fs.FS
+		contentSys http.FileSystem
+		route      Route
 	}
 
 	serverFile struct {
-		log     *klog.LevelLogger
-		fsys    fs.FS
-		httpSys http.FileSystem
-		route   Route
+		log        *klog.LevelLogger
+		fsys       fs.FS
+		contentSys http.FileSystem
+		route      Route
 	}
 
-	reqDetector struct {
-		log *klog.LevelLogger
+	Route struct {
+		Prefix       string `mapstructure:"prefix"`
+		Dir          bool   `mapstructure:"dir"`
+		Path         string `mapstructure:"path"`
+		CacheControl string `mapstructure:"cachecontrol"`
+	}
+
+	contentConfig struct {
+		Hash    string           `json:"hash"`
+		Type    string           `json:"type"`
+		Encoded []encodedContent `json:"encoded"`
+	}
+
+	encodedContent struct {
+		Code string `json:"code"`
+		Hash string `json:"hash"`
+	}
+
+	contentFile struct {
+		name     string
+		hash     string
+		ctype    string
+		encoding string
 	}
 )
 
@@ -135,251 +142,186 @@ func writeError(ctx context.Context, log *klog.LevelLogger, w http.ResponseWrite
 	http.Error(w, http.StatusText(status), status)
 }
 
-func getFileStat(fsys fs.FS, p string) (fs.FileInfo, error) {
-	stat, err := fs.Stat(fsys, p)
+func getFileConfig(fsys fs.FS, p string) (*contentConfig, error) {
+	b, err := fs.ReadFile(fsys, p)
 	if err != nil {
-		return nil, kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", p))
+		return nil, kerrors.WithMsg(err, fmt.Sprintf("Failed to get file config for %s", p))
 	}
-	if stat.IsDir() {
-		return nil, kerrors.WithKind(nil, fs.ErrNotExist, fmt.Sprintf("File %s is a directory", p))
+	cfg := &contentConfig{}
+	if err := json.Unmarshal(b, cfg); err != nil {
+		return nil, kerrors.WithMsg(err, fmt.Sprintf("Failed to parse file config for %s", p))
 	}
-	return stat, nil
+	return cfg, nil
 }
 
-func writeCacheHeaders(w http.ResponseWriter, headers http.Header, stat fs.FileInfo, cachecontrol string) bool {
-	if cachecontrol != "" {
-		etag := fmt.Sprintf(`W/"%x-%x"`, stat.ModTime().Unix(), stat.Size())
-
-		w.Header().Set(headerCacheControl, cachecontrol)
-		// ETag will also be used by [net/http.ServeContent] to send 304 not modified
-		w.Header().Set(headerETag, etag)
-
-		if v := headers.Get(headerIfNoneMatch); v == etag {
-			return true
-		}
-	}
-	return false
-}
-
-const (
-	sniffLen = 512
-)
-
-func readFileBuf(fsys fs.FS, name string, buf []byte) (_ int, retErr error) {
-	f, err := fsys.Open(name)
-	if err != nil {
-		return 0, kerrors.WithMsg(err, fmt.Sprintf("Failed to open file %s", name))
-	}
-	defer func() {
-		if err := f.Close(); err != nil {
-			retErr = errors.Join(retErr, kerrors.WithMsg(err, fmt.Sprintf("Failed to close open file %s", name)))
-		}
-	}()
-	n, err := io.ReadFull(f, buf)
-	if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return n, kerrors.WithMsg(err, fmt.Sprintf("Failed to read file %s", name))
-	}
-	return n, nil
-}
-
-func detectContentType(w http.ResponseWriter, fsys fs.FS, name string) error {
-	if w.Header().Get(headerContentType) != "" {
-		return nil
-	}
-	ctype := mime.TypeByExtension(path.Ext(name))
-	if ctype == "" {
-		var buf [sniffLen]byte
-		n, err := readFileBuf(fsys, name, buf[:])
-		if err != nil {
-			return err
-		}
-		ctype = http.DetectContentType(buf[:n])
-	}
-	w.Header().Set(headerContentType, ctype)
-	return nil
-}
-
-func detectCompression(ctx context.Context, w http.ResponseWriter, headers http.Header, fsys fs.FS, origPath string, compressed []Compressed) (string, error) {
+func detectEncoding(ctx context.Context, reqHeaders http.Header, cfg contentConfig) (string, string) {
 	encodingsSet := map[string]struct{}{}
-	if accept := strings.TrimSpace(headers.Get(headerAcceptEncoding)); accept != "" {
+	if accept := strings.TrimSpace(reqHeaders.Get(headerAcceptEncoding)); accept != "" {
 		for _, directive := range strings.Split(accept, ",") {
 			enc, _, _ := strings.Cut(directive, ";")
 			enc = strings.TrimSpace(enc)
 			encodingsSet[enc] = struct{}{}
 		}
 	}
-	for _, j := range compressed {
-		_, ok := encodingsSet[j.Code]
-		// if regex is nil, then test was unspecified, and should always match
-		if !ok || (j.regex != nil && !j.regex.MatchString(origPath)) {
+	for _, i := range cfg.Encoded {
+		_, ok := encodingsSet[i.Code]
+		if !ok {
 			continue
 		}
-
-		compressedPath := origPath + j.Suffix
-		stat, err := fs.Stat(fsys, compressedPath)
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
-				continue
-			}
-			return "", kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", compressedPath))
-		}
-		if stat.IsDir() {
-			continue
-		}
-
-		w.Header().Set(headerContentEncoding, j.Code)
-		return compressedPath, nil
+		return i.Hash, i.Code
 	}
-	return origPath, nil
+	return cfg.Hash, ""
 }
 
-func detectFilepath(
+const (
+	defaultContentType = "application/octet-stream"
+)
+
+func getContentFilename(
 	ctx context.Context,
-	log *klog.LevelLogger,
-	w http.ResponseWriter,
-	headers http.Header,
+	reqHeaders http.Header,
 	fsys fs.FS,
-	origPath string,
-	cachecontrol string,
-	compressed []Compressed,
-) (string, fs.FileInfo, bool) {
-	stat, err := getFileStat(fsys, origPath)
+	upath string,
+) (*contentFile, error) {
+	cfg, err := getFileConfig(fsys, upath)
 	if err != nil {
-		writeError(ctx, log, w, err)
-		return "", nil, true
+		return nil, err
 	}
 
+	hash, encoding := detectEncoding(ctx, reqHeaders, *cfg)
+
+	ctype := cfg.Type
+	if ctype == "" {
+		// need to detect content type on original path since mime.TypeByExtension
+		// does not handle .gz, .br, etc.
+		ctype = mime.TypeByExtension(path.Ext(upath))
+		if ctype == "" {
+			ctype = defaultContentType
+		}
+	}
+
+	return &contentFile{
+		name:     path.Base(upath),
+		hash:     hash,
+		ctype:    ctype,
+		encoding: encoding,
+	}, nil
+}
+
+func writeResHeaders(w http.ResponseWriter, reqHeaders http.Header, cfg contentFile, cachecontrol string) bool {
 	// According to RFC7232 section 4.1, server must send same Cache-Control,
 	// Content-Location, Date, ETag, Expires, and Vary headers for 304 response
 	// as 200 response.
 	w.Header().Add(headerVary, headerAcceptEncoding)
 
-	if notModified := writeCacheHeaders(w, headers, stat, cachecontrol); notModified {
-		w.WriteHeader(http.StatusNotModified)
-		return "", nil, true
+	if cachecontrol != "" {
+		// strong etag since content is addressed by hash
+		etag := `"` + url.QueryEscape(cfg.hash) + `"`
+
+		w.Header().Set(headerCacheControl, cachecontrol)
+		// ETag also used by [net/http.ServeContent] for byte range requests
+		w.Header().Set(headerETag, etag)
+
+		if v := reqHeaders.Get(headerIfNoneMatch); v == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return true
+		}
 	}
 
-	// need to detect content type on original path since mime.TypeByExtension
-	// and http.DetectContentType does not handle .gz, .br, etc.
-	if err := detectContentType(w, fsys, origPath); err != nil {
-		writeError(ctx, log, w, err)
-		return "", nil, true
-	}
-
-	p, err := detectCompression(ctx, w, headers, fsys, origPath, compressed)
-	if err != nil {
-		writeError(ctx, log, w, kerrors.WithMsg(err, "Failed to detect compression"))
-		return "", nil, true
-	}
-
-	return p, stat, false
+	w.Header().Set(headerContentEncoding, cfg.encoding)
+	w.Header().Set(headerContentType, cfg.ctype)
+	return false
 }
 
-func serveFile(ctx context.Context, log *klog.LevelLogger, w http.ResponseWriter, r *http.Request, httpSys http.FileSystem, p string, origStat fs.FileInfo) {
-	f, err := httpSys.Open(p)
+func serveFile(ctx context.Context, log *klog.LevelLogger, w http.ResponseWriter, r *http.Request, contentSys http.FileSystem, cfg contentFile) {
+	f, err := contentSys.Open(cfg.hash)
 	if err != nil {
-		writeError(ctx, log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to open file %s", p)))
+		writeError(ctx, log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to open file %s", cfg.hash)))
 		return
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			log.Err(ctx, kerrors.WithMsg(err, fmt.Sprintf("Failed to close open file %s", p)))
+			log.Err(ctx, kerrors.WithMsg(err, fmt.Sprintf("Failed to close open file %s", cfg.hash)))
 		}
 	}()
 	stat, err := f.Stat()
 	if err != nil {
-		writeError(ctx, log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", p)))
+		writeError(ctx, log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", cfg.hash)))
 		return
 	}
 	if stat.IsDir() {
-		writeError(ctx, log, w, kerrors.WithKind(nil, fs.ErrNotExist, fmt.Sprintf("File %s is a directory", p)))
+		writeError(ctx, log, w, kerrors.WithKind(nil, fs.ErrNotExist, fmt.Sprintf("File %s is a directory", cfg.hash)))
 		return
 	}
-	http.ServeContent(w, r, origStat.Name(), origStat.ModTime(), f)
+	http.ServeContent(w, r, cfg.name, stat.ModTime(), f)
 }
 
 func (s *serverSubdir) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	p, stat, wroteResponse := detectFilepath(ctx, s.log, w, r.Header, s.fsys, r.URL.Path, s.route.CacheControl, s.route.Compressed)
-	if wroteResponse {
+	file, err := getContentFilename(ctx, r.Header, s.fsys, r.URL.Path)
+	if err != nil {
+		writeError(ctx, s.log, w, err)
 		return
 	}
-	serveFile(ctx, s.log, w, r, s.httpSys, p, stat)
+	if writeResHeaders(w, r.Header, *file, s.route.CacheControl) {
+		return
+	}
+	serveFile(ctx, s.log, w, r, s.contentSys, *file)
 }
 
 func (s *serverFile) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	// may not use url path here to prevent unwanted file access
-	p, stat, wroteResponse := detectFilepath(ctx, s.log, w, r.Header, s.fsys, s.route.Path, s.route.CacheControl, s.route.Compressed)
-	if wroteResponse {
+	file, err := getContentFilename(ctx, r.Header, s.fsys, s.route.Path)
+	if err != nil {
+		writeError(ctx, s.log, w, err)
 		return
 	}
-	serveFile(ctx, s.log, w, r, s.httpSys, p, stat)
+	if writeResHeaders(w, r.Header, *file, s.route.CacheControl) {
+		return
+	}
+	serveFile(ctx, s.log, w, r, s.contentSys, *file)
 }
 
-func NewServer(l klog.Logger, rootSys fs.FS, config Config) *Server {
+func NewServer(l klog.Logger, treeDir, contentDir fs.FS, config Config) *Server {
 	return &Server{
-		log:      klog.NewLevelLogger(l),
-		rootSys:  rootSys,
-		mux:      http.NewServeMux(),
-		config:   config,
-		reqcount: &atomic.Uint32{},
+		log:        klog.NewLevelLogger(l),
+		treeDir:    treeDir,
+		contentDir: contentDir,
+		mux:        http.NewServeMux(),
+		config:     config,
+		reqcount:   &atomic.Uint32{},
 	}
 }
 
 func (s *Server) Mount(routes []Route) error {
 	s.mux = http.NewServeMux()
-	rootHTTPSys := http.FS(s.rootSys)
+	contentSys := http.FS(s.contentDir)
 	for _, i := range routes {
-		k := i
-		ctx := klog.CtxWithAttrs(context.Background(), klog.AString("route.prefix", k.Prefix))
-		s.log.Info(ctx, "Handle route",
-			klog.AString("route.fspath", k.Path),
-			klog.ABool("route.dir", k.Dir),
+		i := i
+		s.log.Info(context.Background(), "Handle route",
+			klog.AString("route.prefix", i.Prefix),
+			klog.AString("route.fspath", i.Path),
+			klog.ABool("route.dir", i.Dir),
 		)
-		compressed := make([]Compressed, 0, len(k.Compressed))
-		for _, j := range k.Compressed {
-			if j.regex == nil {
-				if j.Test == "" {
-					compressed = append(compressed, j)
-					s.log.Info(ctx, "Compressed",
-						klog.AString("compressed.encoding", j.Code),
-						klog.AString("compressed.suffix", j.Suffix),
-					)
-					continue
-				}
-				r, err := regexp.Compile(j.Test)
-				if err != nil {
-					return kerrors.WithMsg(err, fmt.Sprintf("Invalid compressed test regex %s", j.Test))
-				}
-				j.regex = r
-				compressed = append(compressed, j)
-				s.log.Info(ctx, "Compressed",
-					klog.AString("compressed.encoding", j.Code),
-					klog.AString("compressed.test", r.String()),
-					klog.AString("compressed.suffix", j.Suffix),
-				)
-			}
-		}
-		k.Compressed = compressed
-		log := klog.NewLevelLogger(s.log.Logger.Sublogger("router", klog.AString("router.path", k.Prefix)))
-		if k.Dir {
-			fsys, err := fs.Sub(s.rootSys, k.Path)
+		log := klog.NewLevelLogger(s.log.Logger.Sublogger("router", klog.AString("router.path", i.Prefix)))
+		if i.Dir {
+			fsys, err := fs.Sub(s.treeDir, i.Path)
 			if err != nil {
-				return kerrors.WithMsg(err, fmt.Sprintf("Failed to get root fs subdir %s", k.Path))
+				return kerrors.WithMsg(err, fmt.Sprintf("Failed to get root fs subdir %s", i.Path))
 			}
-			s.mux.Handle(k.Prefix, http.StripPrefix(k.Prefix, &serverSubdir{
-				log:     log,
-				fsys:    fsys,
-				httpSys: http.FS(fsys),
-				route:   k,
+			s.mux.Handle(i.Prefix, http.StripPrefix(i.Prefix, &serverSubdir{
+				log:        log,
+				fsys:       fsys,
+				contentSys: contentSys,
+				route:      i,
 			}))
 		} else {
-			s.mux.Handle(k.Prefix, &serverFile{
-				log:     log,
-				fsys:    s.rootSys,
-				httpSys: rootHTTPSys,
-				route:   k,
+			s.mux.Handle(i.Prefix, &serverFile{
+				log:        log,
+				fsys:       s.treeDir,
+				contentSys: contentSys,
+				route:      i,
 			})
 		}
 	}
@@ -544,6 +486,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) Serve(ctx context.Context, port int, opts Opts) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	srv := http.Server{
 		Addr:              ":" + strconv.Itoa(port),
 		Handler:           s,
@@ -553,7 +497,6 @@ func (s *Server) Serve(ctx context.Context, port int, opts Opts) {
 		IdleTimeout:       opts.IdleTimeout,
 		MaxHeaderBytes:    opts.MaxHeaderBytes,
 	}
-	ctx, cancel := context.WithCancel(ctx)
 	go func() {
 		defer cancel()
 		if err := srv.ListenAndServe(); err != nil {

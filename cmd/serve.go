@@ -3,9 +3,11 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"net/netip"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,6 +40,8 @@ func (c *Cmd) getServeCmd() *cobra.Command {
 	serveCmd.PersistentFlags().IntVarP(&c.serveFlags.port, "port", "p", 8080, "port to run the http server on")
 	serveCmd.PersistentFlags().StringVarP(&c.serveFlags.base, "base", "b", "", "static files base")
 	viper.SetDefault("base", "")
+	viper.SetDefault("dircontent", "content")
+	viper.SetDefault("dirtree", "tree")
 	viper.SetDefault("exttotype", []serve.MimeType{})
 	viper.SetDefault("routes", []serve.Route{})
 	viper.SetDefault("maxheadersize", "1M")
@@ -99,12 +103,27 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 	c.log.Info(context.Background(), "Serving directory at base",
 		klog.AString("fs.base", base),
 	)
+	rootDir := os.DirFS(filepath.FromSlash(base))
+	contentDir, err := fs.Sub(rootDir, viper.GetString("dircontent"))
+	if err != nil {
+		c.logFatal(kerrors.WithMsg(err, "Invalid content dir"))
+		return
+	}
+	treeDir, err := fs.Sub(rootDir, viper.GetString("dirtree"))
+	if err != nil {
+		c.logFatal(kerrors.WithMsg(err, "Invalid tree dir"))
+		return
+	}
 
-	rootSys := os.DirFS(base)
-	s := serve.NewServer(c.log.Logger, rootSys, serve.Config{
-		Instance: instance,
-		Proxies:  proxies,
-	})
+	s := serve.NewServer(
+		c.log.Logger,
+		treeDir,
+		contentDir,
+		serve.Config{
+			Instance: instance,
+			Proxies:  proxies,
+		},
+	)
 	if err := s.Mount(routes); err != nil {
 		c.logFatal(kerrors.WithMsg(err, "Failed to mount server routes"))
 		return
