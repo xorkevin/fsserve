@@ -139,7 +139,7 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 			q.Set("mode", "ro")
 			u.RawQuery = q.Encode()
 			d := db.NewSQLClient(c.log.Logger.Sublogger("db"), u.String())
-			treedb = serve.NewSQLiteTreeDB(d, "content")
+			treedb = serve.NewSQLiteTreeDB(d, "content", "encoded")
 
 			c.log.Info(context.Background(), "Using dbengine",
 				klog.AString("db.engine", "sqlite"),

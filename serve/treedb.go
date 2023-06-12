@@ -73,23 +73,30 @@ type (
 	}
 )
 
-func NewSQLiteTreeDB(d sqldb.Executor, tableName string) *SQLiteTreeDB {
+func NewSQLiteTreeDB(d sqldb.Executor, contentTable, encTable string) *SQLiteTreeDB {
 	return &SQLiteTreeDB{
-		repo: treedbmodel.New(d, tableName),
+		repo: treedbmodel.New(d, contentTable, encTable),
 	}
 }
 
 func (t *SQLiteTreeDB) GetContent(ctx context.Context, fpath string) (*ContentConfig, error) {
-	m, err := t.repo.Get(ctx, fpath)
+	m, enc, err := t.repo.Get(ctx, fpath)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return nil, kerrors.WithKind(err, ErrNotFound, "Content config not found")
 		}
 		return nil, kerrors.WithMsg(err, "Failed to get content config")
 	}
+	res := make([]EncodedContent, 0, len(enc))
+	for _, i := range enc {
+		res = append(res, EncodedContent{
+			Code: i.Code,
+			Hash: i.Hash,
+		})
+	}
 	return &ContentConfig{
 		Hash:        m.Hash,
 		ContentType: m.ContentType,
-		// TODO get encoded
+		Encoded:     res,
 	}, nil
 }

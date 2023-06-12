@@ -4,6 +4,7 @@ package treedbmodel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,13 +12,13 @@ import (
 )
 
 type (
-	fileModelTable struct {
+	ctModelTable struct {
 		TableName string
 	}
 )
 
-func (t *fileModelTable) Setup(ctx context.Context, d sqldb.Executor) error {
-	_, err := d.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS "+t.TableName+" (filepath VARCHAR(4095) PRIMARY KEY, hash VARCHAR(2047) NOT NULL, contenttype VARCHAR(255) NOT NULL);")
+func (t *ctModelTable) Setup(ctx context.Context, d sqldb.Executor) error {
+	_, err := d.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS "+t.TableName+" (fpath VARCHAR(4095) PRIMARY KEY, hash VARCHAR(2047) NOT NULL, contenttype VARCHAR(255) NOT NULL);")
 	if err != nil {
 		return err
 	}
@@ -28,15 +29,15 @@ func (t *fileModelTable) Setup(ctx context.Context, d sqldb.Executor) error {
 	return nil
 }
 
-func (t *fileModelTable) Insert(ctx context.Context, d sqldb.Executor, m *Model) error {
-	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (filepath, hash, contenttype) VALUES ($1, $2, $3);", m.Filepath, m.Hash, m.ContentType)
+func (t *ctModelTable) Insert(ctx context.Context, d sqldb.Executor, m *Model) error {
+	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (fpath, hash, contenttype) VALUES ($1, $2, $3);", m.FPath, m.Hash, m.ContentType)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (t *fileModelTable) InsertBulk(ctx context.Context, d sqldb.Executor, models []*Model, allowConflict bool) error {
+func (t *ctModelTable) InsertBulk(ctx context.Context, d sqldb.Executor, models []*Model, allowConflict bool) error {
 	conflictSQL := ""
 	if allowConflict {
 		conflictSQL = " ON CONFLICT DO NOTHING"
@@ -46,19 +47,106 @@ func (t *fileModelTable) InsertBulk(ctx context.Context, d sqldb.Executor, model
 	for c, m := range models {
 		n := c * 3
 		placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d)", n+1, n+2, n+3))
-		args = append(args, m.Filepath, m.Hash, m.ContentType)
+		args = append(args, m.FPath, m.Hash, m.ContentType)
 	}
-	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (filepath, hash, contenttype) VALUES "+strings.Join(placeholders, ", ")+conflictSQL+";", args...)
+	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (fpath, hash, contenttype) VALUES "+strings.Join(placeholders, ", ")+conflictSQL+";", args...)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (t *fileModelTable) GetModelEqFilepath(ctx context.Context, d sqldb.Executor, filepath string) (*Model, error) {
+func (t *ctModelTable) GetModelEqFPath(ctx context.Context, d sqldb.Executor, fpath string) (*Model, error) {
 	m := &Model{}
-	if err := d.QueryRowContext(ctx, "SELECT filepath, hash, contenttype FROM "+t.TableName+" WHERE filepath = $1;", filepath).Scan(&m.Filepath, &m.Hash, &m.ContentType); err != nil {
+	if err := d.QueryRowContext(ctx, "SELECT fpath, hash, contenttype FROM "+t.TableName+" WHERE fpath = $1;", fpath).Scan(&m.FPath, &m.Hash, &m.ContentType); err != nil {
 		return nil, err
 	}
 	return m, nil
+}
+
+func (t *ctModelTable) DelEqFPath(ctx context.Context, d sqldb.Executor, fpath string) error {
+	_, err := d.ExecContext(ctx, "DELETE FROM "+t.TableName+" WHERE fpath = $1;", fpath)
+	return err
+}
+
+func (t *ctModelTable) UpdctPropsEqFPath(ctx context.Context, d sqldb.Executor, m *ctProps, fpath string) error {
+	_, err := d.ExecContext(ctx, "UPDATE "+t.TableName+" SET (hash, contenttype) = ROW($1, $2) WHERE fpath = $3;", m.Hash, m.ContentType, fpath)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+type (
+	encModelTable struct {
+		TableName string
+	}
+)
+
+func (t *encModelTable) Setup(ctx context.Context, d sqldb.Executor) error {
+	_, err := d.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS "+t.TableName+" (fhash VARCHAR(2047), code VARCHAR(255), PRIMARY KEY (fhash, code), order INT NOT NULL, UNIQUE (fhash, order), hash VARCHAR(2047) NOT NULL);")
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *encModelTable) Insert(ctx context.Context, d sqldb.Executor, m *Encoded) error {
+	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (fhash, code, order, hash) VALUES ($1, $2, $3, $4);", m.FHash, m.Code, m.Order, m.Hash)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *encModelTable) InsertBulk(ctx context.Context, d sqldb.Executor, models []*Encoded, allowConflict bool) error {
+	conflictSQL := ""
+	if allowConflict {
+		conflictSQL = " ON CONFLICT DO NOTHING"
+	}
+	placeholders := make([]string, 0, len(models))
+	args := make([]interface{}, 0, len(models)*4)
+	for c, m := range models {
+		n := c * 4
+		placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d)", n+1, n+2, n+3, n+4))
+		args = append(args, m.FHash, m.Code, m.Order, m.Hash)
+	}
+	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (fhash, code, order, hash) VALUES "+strings.Join(placeholders, ", ")+conflictSQL+";", args...)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *encModelTable) DelEqFHash(ctx context.Context, d sqldb.Executor, fhash string) error {
+	_, err := d.ExecContext(ctx, "DELETE FROM "+t.TableName+" WHERE fhash = $1;", fhash)
+	return err
+}
+
+func (t *encModelTable) GetEncodedEqFHashOrdOrder(ctx context.Context, d sqldb.Executor, fhash string, orderasc bool, limit, offset int) (_ []Encoded, retErr error) {
+	order := "DESC"
+	if orderasc {
+		order = "ASC"
+	}
+	res := make([]Encoded, 0, limit)
+	rows, err := d.QueryContext(ctx, "SELECT fhash, code, order, hash FROM "+t.TableName+" WHERE fhash = $3 ORDER BY order "+order+" LIMIT $1 OFFSET $2;", limit, offset, fhash)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("Failed to close db rows: %w", err))
+		}
+	}()
+	for rows.Next() {
+		var m Encoded
+		if err := rows.Scan(&m.FHash, &m.Code, &m.Order, &m.Hash); err != nil {
+			return nil, err
+		}
+		res = append(res, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return res, nil
 }
