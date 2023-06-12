@@ -101,19 +101,8 @@ const (
 	headerVary            = "Vary"
 )
 
-func getFSErrorStatus(err error) int {
-	if errors.Is(err, fs.ErrNotExist) {
-		return http.StatusNotFound
-	}
-	if errors.Is(err, fs.ErrPermission) {
-		return http.StatusForbidden
-	}
-	return http.StatusInternalServerError
-}
-
 func writeError(ctx context.Context, log *klog.LevelLogger, w http.ResponseWriter, err error) {
-	status := getFSErrorStatus(err)
-
+	// TODO
 	if status >= http.StatusBadRequest && status < http.StatusInternalServerError {
 		log.WarnErr(ctx, err)
 	} else {
@@ -154,7 +143,7 @@ const (
 )
 
 func detectContentType(cfg ContentConfig, fpath string) string {
-	ctype := cfg.Type
+	ctype := cfg.ContentType
 	if ctype != "" {
 		return ctype
 	}
@@ -169,11 +158,11 @@ func detectContentType(cfg ContentConfig, fpath string) string {
 
 func getContentConfig(
 	ctx context.Context,
-	db TreeDB,
+	d TreeDB,
 	reqHeaders http.Header,
 	fpath string,
 ) (*contentFile, error) {
-	cfg, err := db.GetContent(ctx, fpath)
+	cfg, err := d.GetContent(ctx, fpath)
 	if err != nil {
 		return nil, kerrors.WithMsg(err, fmt.Sprintf("Failed to get content config for %s", fpath))
 	}
@@ -247,7 +236,7 @@ func sendFile(
 
 func serveFile(
 	log *klog.LevelLogger,
-	db TreeDB,
+	d TreeDB,
 	contentSys http.FileSystem,
 	w http.ResponseWriter,
 	r *http.Request,
@@ -256,7 +245,7 @@ func serveFile(
 ) {
 	ctx := r.Context()
 
-	cfg, err := getContentConfig(ctx, db, r.Header, fpath)
+	cfg, err := getContentConfig(ctx, d, r.Header, fpath)
 	if err != nil {
 		writeError(ctx, log, w, err)
 		return

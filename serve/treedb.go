@@ -2,11 +2,11 @@ package serve
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"io/fs"
 
-	_ "modernc.org/sqlite"
+	"xorkevin.dev/forge/model/sqldb"
+	"xorkevin.dev/fsserve/serve/treedbmodel"
 	"xorkevin.dev/kerrors"
 )
 
@@ -16,9 +16,9 @@ type (
 	}
 
 	ContentConfig struct {
-		Hash    string           `json:"hash"`
-		Type    string           `json:"type"`
-		Encoded []EncodedContent `json:"encoded"`
+		Hash        string           `json:"hash"`
+		ContentType string           `json:"contenttype"`
+		Encoded     []EncodedContent `json:"encoded"`
 	}
 
 	EncodedContent struct {
@@ -53,24 +53,20 @@ func (t *FSTreeDB) GetContent(ctx context.Context, fpath string) (*ContentConfig
 
 type (
 	SQLiteTreeDB struct {
-		db        *sql.DB
-		tableName string
+		repo treedbmodel.Repo
 	}
 )
 
-func NewSQLiteTreeDB(dsn string, tableName string) (*SQLiteTreeDB, error) {
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, kerrors.WithMsg(err, "Failed creating sqlite db client")
-	}
+func NewSQLiteTreeDB(d sqldb.Executor, tableName string) *SQLiteTreeDB {
 	return &SQLiteTreeDB{
-		db:        db,
-		tableName: tableName,
-	}, nil
+		repo: treedbmodel.New(d, tableName),
+	}
 }
 
 func (t *SQLiteTreeDB) GetContent(ctx context.Context, fpath string) (*ContentConfig, error) {
-	// TODO sql query
-	t.db.QueryContext(ctx, `SELECT hash, type FROM `+t.tableName+` WHERE fpath = $1`)
+	m, err := t.repo.Get(ctx, fpath)
+	if err != nil {
+		// TODO
+	}
 	return nil, nil
 }

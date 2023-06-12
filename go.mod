@@ -7,8 +7,9 @@ require (
 	github.com/spf13/viper v1.15.0
 	github.com/stretchr/testify v1.8.2
 	modernc.org/sqlite v1.23.1
+	xorkevin.dev/forge v0.4.3
 	xorkevin.dev/kerrors v0.1.5
-	xorkevin.dev/klog v0.0.0-20230409052311-08b959cc2a77
+	xorkevin.dev/klog v0.0.0-20230422031314-3f827239fa5d
 )
 
 require (
