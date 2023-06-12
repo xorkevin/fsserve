@@ -101,8 +101,16 @@ const (
 	headerVary            = "Vary"
 )
 
+func getErrorStatus(err error) int {
+	if errors.Is(err, ErrNotFound) {
+		return http.StatusNotFound
+	}
+	return http.StatusBadRequest
+}
+
 func writeError(ctx context.Context, log *klog.LevelLogger, w http.ResponseWriter, err error) {
-	// TODO
+	status := getErrorStatus(err)
+
 	if status >= http.StatusBadRequest && status < http.StatusInternalServerError {
 		log.WarnErr(ctx, err)
 	} else {
@@ -228,7 +236,7 @@ func sendFile(
 		return
 	}
 	if stat.IsDir() {
-		writeError(ctx, log, w, kerrors.WithKind(nil, fs.ErrNotExist, fmt.Sprintf("File %s is a directory", cfg.hash)))
+		writeError(ctx, log, w, kerrors.WithMsg(nil, fmt.Sprintf("File %s is a directory", cfg.hash)))
 		return
 	}
 	http.ServeContent(w, r, cfg.name, stat.ModTime(), f)

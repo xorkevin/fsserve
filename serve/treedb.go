@@ -3,9 +3,11 @@ package serve
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 
 	"xorkevin.dev/forge/model/sqldb"
+	"xorkevin.dev/fsserve/db"
 	"xorkevin.dev/fsserve/serve/treedbmodel"
 	"xorkevin.dev/kerrors"
 )
@@ -27,6 +29,17 @@ type (
 	}
 )
 
+// ErrNotFound is returned when a file is not found
+var ErrNotFound errNotFound
+
+type (
+	errNotFound struct{}
+)
+
+func (e errNotFound) Error() string {
+	return "File not found"
+}
+
 type (
 	FSTreeDB struct {
 		fsys fs.FS
@@ -42,11 +55,14 @@ func NewFSTreeDB(fsys fs.FS) *FSTreeDB {
 func (t *FSTreeDB) GetContent(ctx context.Context, fpath string) (*ContentConfig, error) {
 	b, err := fs.ReadFile(t.fsys, fpath)
 	if err != nil {
-		return nil, kerrors.WithMsg(err, "Failed to get file config")
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, kerrors.WithKind(err, ErrNotFound, "Content config not found")
+		}
+		return nil, kerrors.WithMsg(err, "Failed to get content config")
 	}
 	cfg := &ContentConfig{}
 	if err := json.Unmarshal(b, cfg); err != nil {
-		return nil, kerrors.WithMsg(err, "Failed to parse file config")
+		return nil, kerrors.WithMsg(err, "Failed to parse content config")
 	}
 	return cfg, nil
 }
@@ -66,7 +82,14 @@ func NewSQLiteTreeDB(d sqldb.Executor, tableName string) *SQLiteTreeDB {
 func (t *SQLiteTreeDB) GetContent(ctx context.Context, fpath string) (*ContentConfig, error) {
 	m, err := t.repo.Get(ctx, fpath)
 	if err != nil {
-		// TODO
+		if errors.Is(err, db.ErrNotFound) {
+			return nil, kerrors.WithKind(err, ErrNotFound, "Content config not found")
+		}
+		return nil, kerrors.WithMsg(err, "Failed to get content config")
 	}
-	return nil, nil
+	return &ContentConfig{
+		Hash:        m.Hash,
+		ContentType: m.ContentType,
+		// TODO get encoded
+	}, nil
 }

@@ -53,21 +53,21 @@ func (r *repo) New(filepath, hash, contenttype string) *Model {
 func (r *repo) Get(ctx context.Context, filepath string) (*Model, error) {
 	m, err := r.table.GetModelEqFilepath(ctx, r.db, filepath)
 	if err != nil {
-		return nil, kerrors.WithMsg(err, "Failed to get file")
+		return nil, kerrors.WithMsg(err, "Failed to get content config")
 	}
 	return m, nil
 }
 
 func (r *repo) Insert(ctx context.Context, m *Model) error {
 	if err := r.table.Insert(ctx, r.db, m); err != nil {
-		return kerrors.WithMsg(err, "Failed to insert file")
+		return kerrors.WithMsg(err, "Failed to insert content config")
 	}
 	return nil
 }
 
 func (r *repo) Setup(ctx context.Context) error {
 	if err := r.table.Setup(ctx, r.db); err != nil {
-		return kerrors.WithMsg(err, "Failed to setup content tree table")
+		return kerrors.WithMsg(err, "Failed to setup content config table")
 	}
 	return nil
 }
