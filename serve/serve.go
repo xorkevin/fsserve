@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -26,7 +25,7 @@ import (
 type (
 	MimeType struct {
 		Ext         string `mapstructure:"ext" json:"ext"`
-		ContentType string `mapstructure:"contenttype" json:"contentType"`
+		ContentType string `mapstructure:"contenttype" json:"contenttype"`
 	}
 )
 
@@ -42,7 +41,7 @@ func AddMimeTypes(mimeTypes []MimeType) error {
 type (
 	Server struct {
 		log        *klog.LevelLogger
-		treeDir    fs.FS
+		db         TreeDB
 		contentDir fs.FS
 		mux        *http.ServeMux
 		config     Config
@@ -65,14 +64,14 @@ type (
 
 	serverSubdir struct {
 		log        *klog.LevelLogger
-		fsys       fs.FS
+		db         TreeDB
 		contentSys http.FileSystem
 		route      Route
 	}
 
 	serverFile struct {
 		log        *klog.LevelLogger
-		fsys       fs.FS
+		db         TreeDB
 		contentSys http.FileSystem
 		route      Route
 	}
@@ -82,17 +81,6 @@ type (
 		Dir          bool   `mapstructure:"dir"`
 		Path         string `mapstructure:"path"`
 		CacheControl string `mapstructure:"cachecontrol"`
-	}
-
-	contentConfig struct {
-		Hash    string           `json:"hash"`
-		Type    string           `json:"type"`
-		Encoded []encodedContent `json:"encoded"`
-	}
-
-	encodedContent struct {
-		Code string `json:"code"`
-		Hash string `json:"hash"`
 	}
 
 	contentFile struct {
@@ -142,19 +130,7 @@ func writeError(ctx context.Context, log *klog.LevelLogger, w http.ResponseWrite
 	http.Error(w, http.StatusText(status), status)
 }
 
-func getFileConfig(fsys fs.FS, p string) (*contentConfig, error) {
-	b, err := fs.ReadFile(fsys, p)
-	if err != nil {
-		return nil, kerrors.WithMsg(err, fmt.Sprintf("Failed to get file config for %s", p))
-	}
-	cfg := &contentConfig{}
-	if err := json.Unmarshal(b, cfg); err != nil {
-		return nil, kerrors.WithMsg(err, fmt.Sprintf("Failed to parse file config for %s", p))
-	}
-	return cfg, nil
-}
-
-func detectEncoding(ctx context.Context, reqHeaders http.Header, cfg contentConfig) (string, string) {
+func detectEncoding(cfg ContentConfig, reqHeaders http.Header) (string, string) {
 	encodingsSet := map[string]struct{}{}
 	if accept := strings.TrimSpace(reqHeaders.Get(headerAcceptEncoding)); accept != "" {
 		for _, directive := range strings.Split(accept, ",") {
@@ -177,31 +153,36 @@ const (
 	defaultContentType = "application/octet-stream"
 )
 
-func getContentFilename(
-	ctx context.Context,
-	reqHeaders http.Header,
-	fsys fs.FS,
-	upath string,
-) (*contentFile, error) {
-	cfg, err := getFileConfig(fsys, upath)
-	if err != nil {
-		return nil, err
-	}
-
-	hash, encoding := detectEncoding(ctx, reqHeaders, *cfg)
-
+func detectContentType(cfg ContentConfig, fpath string) string {
 	ctype := cfg.Type
-	if ctype == "" {
-		// need to detect content type on original path since mime.TypeByExtension
-		// does not handle .gz, .br, etc.
-		ctype = mime.TypeByExtension(path.Ext(upath))
-		if ctype == "" {
-			ctype = defaultContentType
-		}
+	if ctype != "" {
+		return ctype
 	}
+	// need to detect content type on original path since mime.TypeByExtension
+	// does not handle .gz, .br, etc.
+	ctype = mime.TypeByExtension(path.Ext(fpath))
+	if ctype != "" {
+		return ctype
+	}
+	return defaultContentType
+}
+
+func getContentConfig(
+	ctx context.Context,
+	db TreeDB,
+	reqHeaders http.Header,
+	fpath string,
+) (*contentFile, error) {
+	cfg, err := db.GetContent(ctx, fpath)
+	if err != nil {
+		return nil, kerrors.WithMsg(err, fmt.Sprintf("Failed to get content config for %s", fpath))
+	}
+
+	hash, encoding := detectEncoding(*cfg, reqHeaders)
+	ctype := detectContentType(*cfg, fpath)
 
 	return &contentFile{
-		name:     path.Base(upath),
+		name:     path.Base(fpath),
 		hash:     hash,
 		ctype:    ctype,
 		encoding: encoding,
@@ -233,7 +214,15 @@ func writeResHeaders(w http.ResponseWriter, reqHeaders http.Header, cfg contentF
 	return false
 }
 
-func serveFile(ctx context.Context, log *klog.LevelLogger, w http.ResponseWriter, r *http.Request, contentSys http.FileSystem, cfg contentFile) {
+func sendFile(
+	ctx context.Context,
+	log *klog.LevelLogger,
+	contentSys http.FileSystem,
+	w http.ResponseWriter,
+	r *http.Request,
+	cfg contentFile,
+	cachecontrol string,
+) {
 	f, err := contentSys.Open(cfg.hash)
 	if err != nil {
 		writeError(ctx, log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to open file %s", cfg.hash)))
@@ -256,37 +245,43 @@ func serveFile(ctx context.Context, log *klog.LevelLogger, w http.ResponseWriter
 	http.ServeContent(w, r, cfg.name, stat.ModTime(), f)
 }
 
-func (s *serverSubdir) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func serveFile(
+	log *klog.LevelLogger,
+	db TreeDB,
+	contentSys http.FileSystem,
+	w http.ResponseWriter,
+	r *http.Request,
+	fpath string,
+	cachecontrol string,
+) {
 	ctx := r.Context()
-	file, err := getContentFilename(ctx, r.Header, s.fsys, r.URL.Path)
+
+	cfg, err := getContentConfig(ctx, db, r.Header, fpath)
 	if err != nil {
-		writeError(ctx, s.log, w, err)
+		writeError(ctx, log, w, err)
 		return
 	}
-	if writeResHeaders(w, r.Header, *file, s.route.CacheControl) {
+
+	if writeResHeaders(w, r.Header, *cfg, cachecontrol) {
 		return
 	}
-	serveFile(ctx, s.log, w, r, s.contentSys, *file)
+
+	sendFile(ctx, log, contentSys, w, r, *cfg, cachecontrol)
+}
+
+func (s *serverSubdir) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	serveFile(s.log, s.db, s.contentSys, w, r, path.Join(s.route.Path, r.URL.Path), s.route.CacheControl)
 }
 
 func (s *serverFile) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	// may not use url path here to prevent unwanted file access
-	file, err := getContentFilename(ctx, r.Header, s.fsys, s.route.Path)
-	if err != nil {
-		writeError(ctx, s.log, w, err)
-		return
-	}
-	if writeResHeaders(w, r.Header, *file, s.route.CacheControl) {
-		return
-	}
-	serveFile(ctx, s.log, w, r, s.contentSys, *file)
+	serveFile(s.log, s.db, s.contentSys, w, r, s.route.Path, s.route.CacheControl)
 }
 
-func NewServer(l klog.Logger, treeDir, contentDir fs.FS, config Config) *Server {
+func NewServer(l klog.Logger, treedb TreeDB, contentDir fs.FS, config Config) *Server {
 	return &Server{
 		log:        klog.NewLevelLogger(l),
-		treeDir:    treeDir,
+		db:         treedb,
 		contentDir: contentDir,
 		mux:        http.NewServeMux(),
 		config:     config,
@@ -306,20 +301,16 @@ func (s *Server) Mount(routes []Route) error {
 		)
 		log := klog.NewLevelLogger(s.log.Logger.Sublogger("router", klog.AString("router.path", i.Prefix)))
 		if i.Dir {
-			fsys, err := fs.Sub(s.treeDir, i.Path)
-			if err != nil {
-				return kerrors.WithMsg(err, fmt.Sprintf("Failed to get root fs subdir %s", i.Path))
-			}
 			s.mux.Handle(i.Prefix, http.StripPrefix(i.Prefix, &serverSubdir{
 				log:        log,
-				fsys:       fsys,
+				db:         s.db,
 				contentSys: contentSys,
 				route:      i,
 			}))
 		} else {
 			s.mux.Handle(i.Prefix, &serverFile{
 				log:        log,
-				fsys:       s.treeDir,
+				db:         s.db,
 				contentSys: contentSys,
 				route:      i,
 			})

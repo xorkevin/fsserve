@@ -37,11 +37,13 @@ func (c *Cmd) getServeCmd() *cobra.Command {
 		Run:               c.execServe,
 		DisableAutoGenTag: true,
 	}
-	serveCmd.PersistentFlags().IntVarP(&c.serveFlags.port, "port", "p", 8080, "port to run the http server on")
+	serveCmd.PersistentFlags().IntVarP(&c.serveFlags.port, "port", "p", 0, "port to run the http server on (default 8080)")
 	serveCmd.PersistentFlags().StringVarP(&c.serveFlags.base, "base", "b", "", "static files base")
+	viper.SetDefault("port", 8080)
 	viper.SetDefault("base", "")
-	viper.SetDefault("dircontent", "content")
-	viper.SetDefault("dirtree", "tree")
+	viper.SetDefault("contentdir", "content")
+	viper.SetDefault("treedir", "tree")
+	viper.SetDefault("treedb", "tree.db")
 	viper.SetDefault("exttotype", []serve.MimeType{})
 	viper.SetDefault("routes", []serve.Route{})
 	viper.SetDefault("maxheadersize", "1M")
@@ -93,23 +95,33 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 		klog.AAny("realip.proxies", proxystrs),
 	)
 
+	port := c.serveFlags.port
+	if port == 0 {
+		port = viper.GetInt("port")
+		if port == 0 {
+			port = 8080
+		}
+	}
 	base := c.serveFlags.base
 	if base == "" {
 		base = viper.GetString("base")
-	}
-	if base == "" {
-		base = "."
+		if base == "" {
+			base = "."
+		}
 	}
 	c.log.Info(context.Background(), "Serving directory at base",
 		klog.AString("fs.base", base),
+		klog.AInt("port", port),
 	)
+
 	rootDir := os.DirFS(filepath.FromSlash(base))
-	contentDir, err := fs.Sub(rootDir, viper.GetString("dircontent"))
+	contentDir, err := fs.Sub(rootDir, viper.GetString("contentdir"))
 	if err != nil {
 		c.logFatal(kerrors.WithMsg(err, "Invalid content dir"))
 		return
 	}
-	treeDir, err := fs.Sub(rootDir, viper.GetString("dirtree"))
+	// TODO init tree db if set
+	treeDir, err := fs.Sub(rootDir, viper.GetString("treedir"))
 	if err != nil {
 		c.logFatal(kerrors.WithMsg(err, "Invalid tree dir"))
 		return
