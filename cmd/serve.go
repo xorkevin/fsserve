@@ -3,13 +3,9 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"net/netip"
-	"net/url"
 	"os"
 	"os/signal"
-	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,7 +15,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"xorkevin.dev/fsserve/db"
 	"xorkevin.dev/fsserve/serve"
 	"xorkevin.dev/kerrors"
 	"xorkevin.dev/klog"
@@ -41,20 +36,6 @@ func (c *Cmd) getServeCmd() *cobra.Command {
 		DisableAutoGenTag: true,
 	}
 	serveCmd.PersistentFlags().IntVarP(&c.serveFlags.port, "port", "p", 0, "port to run the http server on (default 8080)")
-	serveCmd.PersistentFlags().StringVarP(&c.serveFlags.base, "base", "b", "", "static files base")
-	viper.SetDefault("port", 8080)
-	viper.SetDefault("base", "")
-	viper.SetDefault("contentdir", "content")
-	viper.SetDefault("dbengine", "fs")
-	viper.SetDefault("treedb", "tree")
-	viper.SetDefault("exttotype", []serve.MimeType{})
-	viper.SetDefault("routes", []serve.Route{})
-	viper.SetDefault("maxheadersize", "1M")
-	viper.SetDefault("maxconnread", "5s")
-	viper.SetDefault("maxconnheader", "2s")
-	viper.SetDefault("maxconnwrite", "5s")
-	viper.SetDefault("maxconnidle", "5s")
-	viper.SetDefault("gracefulshutdown", "5s")
 	return serveCmd
 }
 
@@ -98,71 +79,9 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 		klog.AAny("realip.proxies", proxystrs),
 	)
 
-	base := c.serveFlags.base
-	if base == "" {
-		base = viper.GetString("base")
-		if base == "" {
-			base = "."
-		}
-	}
-
-	contentdir := viper.GetString("contentdir")
-	rootDir := os.DirFS(filepath.FromSlash(base))
-	contentDir, err := fs.Sub(rootDir, contentdir)
+	contentDir, treedb, err := c.getTree("ro")
 	if err != nil {
-		c.logFatal(kerrors.WithMsg(err, "Invalid content dir"))
-		return
-	}
-
-	c.log.Info(context.Background(), "Serving directory at base",
-		klog.AString("fs.base", base),
-		klog.AString("fs.contentdir", path.Join(base, contentdir)),
-	)
-
-	var treedb serve.TreeDB
-	switch viper.GetString("dbengine") {
-	case "sqlite":
-		{
-			// url must be in the form of
-			// file:rel/path/to/file.db?optquery=value&otheroptquery=value
-			u, err := url.Parse(viper.GetString("treedb"))
-			if err != nil {
-				c.logFatal(kerrors.WithMsg(err, "Invalid tree db sqlite dsn"))
-				return
-			}
-			if u.Opaque == "" {
-				c.logFatal(kerrors.WithMsg(err, "Tree db sqlite dsn must be relative"))
-				return
-			}
-			u.Opaque = path.Join(base, u.Opaque)
-			q := u.Query()
-			q.Set("mode", "ro")
-			u.RawQuery = q.Encode()
-			d := db.NewSQLClient(c.log.Logger.Sublogger("db"), u.String())
-			treedb = serve.NewSQLiteTreeDB(d, "content", "encoded")
-
-			c.log.Info(context.Background(), "Using dbengine",
-				klog.AString("db.engine", "sqlite"),
-				klog.AString("db.file", u.Opaque),
-			)
-		}
-	case "fs", "":
-		{
-			treedir := viper.GetString("treedb")
-			treeDir, err := fs.Sub(rootDir, treedir)
-			if err != nil {
-				c.logFatal(kerrors.WithMsg(err, "Invalid tree dir"))
-				return
-			}
-			treedb = serve.NewFSTreeDB(treeDir)
-
-			c.log.Info(context.Background(), "Using dbengine",
-				klog.AString("db.engine", "fs"),
-				klog.AString("db.dir", treedir),
-			)
-		}
-	default:
-		c.logFatal(kerrors.WithMsg(err, "Invalid db engine"))
+		c.logFatal(err)
 		return
 	}
 
