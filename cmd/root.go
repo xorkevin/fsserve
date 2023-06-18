@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -15,6 +14,7 @@ import (
 	"xorkevin.dev/fsserve/db"
 	"xorkevin.dev/fsserve/serve"
 	"xorkevin.dev/kerrors"
+	"xorkevin.dev/kfs"
 	"xorkevin.dev/klog"
 )
 
@@ -90,7 +90,7 @@ func (c *Cmd) getBaseFS() (fs.FS, string) {
 			base = "."
 		}
 	}
-	return os.DirFS(filepath.FromSlash(base)), base
+	return kfs.DirFS(base), base
 }
 
 func (c *Cmd) getContentFS(rootDir fs.FS, base string) (fs.FS, error) {

@@ -1,14 +1,20 @@
 package cmd
 
 import (
+	"context"
+	"strings"
+
 	"github.com/spf13/cobra"
 	"xorkevin.dev/fsserve/serve"
+	"xorkevin.dev/kerrors"
 )
 
 type (
 	treeFlags struct {
-		src string
-		dst string
+		ctype string
+		src   string
+		enc   []string
+		dst   string
 	}
 )
 
@@ -28,8 +34,10 @@ func (c *Cmd) getTreeCmd() *cobra.Command {
 		DisableAutoGenTag: true,
 	}
 
-	addCmd.PersistentFlags().StringVarP(&c.treeFlags.src, "src", "s", "", "file or dir to add")
-	addCmd.PersistentFlags().StringVarP(&c.treeFlags.dst, "target", "t", "", "destination path")
+	addCmd.PersistentFlags().StringVar(&c.treeFlags.src, "contenttype", "c", "content type of src")
+	addCmd.PersistentFlags().StringVarP(&c.treeFlags.src, "src", "s", "", "file to add")
+	addCmd.PersistentFlags().StringArrayVarP(&c.treeFlags.enc, "enc", "e", nil, "encoded versions of the file in the form of (code:filename)")
+	addCmd.PersistentFlags().StringVarP(&c.treeFlags.dst, "dst", "t", "", "destination path")
 
 	treeCmd.AddCommand(addCmd)
 
@@ -37,13 +45,25 @@ func (c *Cmd) getTreeCmd() *cobra.Command {
 }
 
 func (c *Cmd) execTreeAdd(cmd *cobra.Command, args []string) {
+	enc := make([]serve.EncodedFile, 0, len(c.treeFlags.enc))
+	for _, i := range c.treeFlags.enc {
+		code, name, ok := strings.Cut(i, ":")
+		if !ok {
+			c.logFatal(kerrors.WithMsg(nil, "Invalid encoded file"))
+			return
+		}
+		enc = append(enc, serve.EncodedFile{
+			Code: strings.TrimSpace(code),
+			Name: name,
+		})
+	}
 	contentDir, treedb, err := c.getTree("rw")
 	if err != nil {
 		c.logFatal(err)
 		return
 	}
 	tree := serve.NewTree(c.log.Logger, treedb, contentDir)
-	if err := tree.Add(c.treeFlags.src, c.treeFlags.dst); err != nil {
+	if err := tree.Add(context.Background(), c.treeFlags.dst, c.treeFlags.ctype, c.treeFlags.src, enc); err != nil {
 		c.logFatal(err)
 		return
 	}
