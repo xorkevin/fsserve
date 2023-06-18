@@ -36,7 +36,10 @@ func NewTree(log klog.Logger, treedb TreeDB, contentDir fs.FS) *Tree {
 	}
 }
 
-func (t *Tree) Add(ctx context.Context, ctype string, dst, src string, encoded []EncodedFile) error {
+func (t *Tree) Add(ctx context.Context, dst string, ctype string, src string, encoded []EncodedFile) error {
+	if dst == "" {
+		return kerrors.WithMsg(nil, "Must provide dst")
+	}
 	cfg := ContentConfig{
 		ContentType: ctype,
 		Encoded:     make([]EncodedContent, 0, len(encoded)),
@@ -50,7 +53,6 @@ func (t *Tree) Add(ctx context.Context, ctype string, dst, src string, encoded [
 		if i.Code == "" {
 			return kerrors.WithMsg(nil, "Must provide encoded file code")
 		}
-
 		dstName, err := t.checkAndAddFile(ctx, i.Name)
 		if err != nil {
 			return kerrors.WithMsg(err, fmt.Sprintf("Failed to add encoded file: %s", i.Name))
@@ -60,7 +62,10 @@ func (t *Tree) Add(ctx context.Context, ctype string, dst, src string, encoded [
 			Hash: dstName,
 		})
 	}
-	// TODO add content to tree
+
+	if err := t.db.Add(ctx, dst, cfg); err != nil {
+		return kerrors.WithMsg(err, fmt.Sprintf("Failed to add content config for %s", dst))
+	}
 	return nil
 }
 
@@ -73,11 +78,10 @@ func (t *Tree) checkAndAddFile(ctx context.Context, srcName string) (string, err
 		return "", kerrors.WithMsg(nil, fmt.Sprintf("Src file is dir"))
 	}
 
-	h, err := t.hashFile(srcName)
+	dstName, err := t.hashFile(srcName)
 	if err != nil {
 		return "", kerrors.WithMsg(err, "Failed to hash src file")
 	}
-	dstName := "blake2b/" + h
 
 	if dstInfo, err := fs.Stat(t.contentDir, dstName); err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {

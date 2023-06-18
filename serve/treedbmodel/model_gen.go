@@ -18,7 +18,7 @@ type (
 )
 
 func (t *ctModelTable) Setup(ctx context.Context, d sqldb.Executor) error {
-	_, err := d.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS "+t.TableName+" (fpath VARCHAR(4095) PRIMARY KEY, hash VARCHAR(2047) NOT NULL, contenttype VARCHAR(255) NOT NULL);")
+	_, err := d.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS "+t.TableName+" (name VARCHAR(4095) PRIMARY KEY, hash VARCHAR(2047) NOT NULL, contenttype VARCHAR(255) NOT NULL);")
 	if err != nil {
 		return err
 	}
@@ -30,7 +30,7 @@ func (t *ctModelTable) Setup(ctx context.Context, d sqldb.Executor) error {
 }
 
 func (t *ctModelTable) Insert(ctx context.Context, d sqldb.Executor, m *Model) error {
-	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (fpath, hash, contenttype) VALUES ($1, $2, $3);", m.FPath, m.Hash, m.ContentType)
+	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (name, hash, contenttype) VALUES ($1, $2, $3);", m.Name, m.Hash, m.ContentType)
 	if err != nil {
 		return err
 	}
@@ -47,30 +47,30 @@ func (t *ctModelTable) InsertBulk(ctx context.Context, d sqldb.Executor, models 
 	for c, m := range models {
 		n := c * 3
 		placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d)", n+1, n+2, n+3))
-		args = append(args, m.FPath, m.Hash, m.ContentType)
+		args = append(args, m.Name, m.Hash, m.ContentType)
 	}
-	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (fpath, hash, contenttype) VALUES "+strings.Join(placeholders, ", ")+conflictSQL+";", args...)
+	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (name, hash, contenttype) VALUES "+strings.Join(placeholders, ", ")+conflictSQL+";", args...)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (t *ctModelTable) GetModelEqFPath(ctx context.Context, d sqldb.Executor, fpath string) (*Model, error) {
+func (t *ctModelTable) GetModelEqName(ctx context.Context, d sqldb.Executor, name string) (*Model, error) {
 	m := &Model{}
-	if err := d.QueryRowContext(ctx, "SELECT fpath, hash, contenttype FROM "+t.TableName+" WHERE fpath = $1;", fpath).Scan(&m.FPath, &m.Hash, &m.ContentType); err != nil {
+	if err := d.QueryRowContext(ctx, "SELECT name, hash, contenttype FROM "+t.TableName+" WHERE name = $1;", name).Scan(&m.Name, &m.Hash, &m.ContentType); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
-func (t *ctModelTable) DelEqFPath(ctx context.Context, d sqldb.Executor, fpath string) error {
-	_, err := d.ExecContext(ctx, "DELETE FROM "+t.TableName+" WHERE fpath = $1;", fpath)
+func (t *ctModelTable) DelEqName(ctx context.Context, d sqldb.Executor, name string) error {
+	_, err := d.ExecContext(ctx, "DELETE FROM "+t.TableName+" WHERE name = $1;", name)
 	return err
 }
 
-func (t *ctModelTable) UpdctPropsEqFPath(ctx context.Context, d sqldb.Executor, m *ctProps, fpath string) error {
-	_, err := d.ExecContext(ctx, "UPDATE "+t.TableName+" SET (hash, contenttype) = ROW($1, $2) WHERE fpath = $3;", m.Hash, m.ContentType, fpath)
+func (t *ctModelTable) UpdctPropsEqName(ctx context.Context, d sqldb.Executor, m *ctProps, name string) error {
+	_, err := d.ExecContext(ctx, "UPDATE "+t.TableName+" SET (hash, contenttype) = ROW($1, $2) WHERE name = $3;", m.Hash, m.ContentType, name)
 	if err != nil {
 		return err
 	}

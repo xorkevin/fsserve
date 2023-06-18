@@ -84,7 +84,7 @@ type (
 	}
 
 	contentFile struct {
-		name     string
+		basename string
 		hash     string
 		ctype    string
 		encoding string
@@ -150,14 +150,14 @@ const (
 	defaultContentType = "application/octet-stream"
 )
 
-func detectContentType(cfg ContentConfig, fpath string) string {
+func detectContentType(cfg ContentConfig, name string) string {
 	ctype := cfg.ContentType
 	if ctype != "" {
 		return ctype
 	}
 	// need to detect content type on original path since mime.TypeByExtension
 	// does not handle .gz, .br, etc.
-	ctype = mime.TypeByExtension(path.Ext(fpath))
+	ctype = mime.TypeByExtension(path.Ext(name))
 	if ctype != "" {
 		return ctype
 	}
@@ -168,18 +168,18 @@ func getContentConfig(
 	ctx context.Context,
 	d TreeDB,
 	reqHeaders http.Header,
-	fpath string,
+	name string,
 ) (*contentFile, error) {
-	cfg, err := d.GetContent(ctx, fpath)
+	cfg, err := d.Get(ctx, name)
 	if err != nil {
-		return nil, kerrors.WithMsg(err, fmt.Sprintf("Failed to get content config for %s", fpath))
+		return nil, kerrors.WithMsg(err, fmt.Sprintf("Failed to get content config for %s", name))
 	}
 
 	hash, encoding := detectEncoding(*cfg, reqHeaders)
-	ctype := detectContentType(*cfg, fpath)
+	ctype := detectContentType(*cfg, name)
 
 	return &contentFile{
-		name:     path.Base(fpath),
+		basename: path.Base(name),
 		hash:     hash,
 		ctype:    ctype,
 		encoding: encoding,
@@ -239,7 +239,7 @@ func sendFile(
 		writeError(ctx, log, w, kerrors.WithMsg(nil, fmt.Sprintf("File %s is a directory", cfg.hash)))
 		return
 	}
-	http.ServeContent(w, r, cfg.name, stat.ModTime(), f)
+	http.ServeContent(w, r, cfg.basename, stat.ModTime(), f)
 }
 
 func serveFile(
@@ -248,12 +248,12 @@ func serveFile(
 	contentSys http.FileSystem,
 	w http.ResponseWriter,
 	r *http.Request,
-	fpath string,
+	name string,
 	cachecontrol string,
 ) {
 	ctx := r.Context()
 
-	cfg, err := getContentConfig(ctx, d, r.Header, fpath)
+	cfg, err := getContentConfig(ctx, d, r.Header, name)
 	if err != nil {
 		writeError(ctx, log, w, err)
 		return

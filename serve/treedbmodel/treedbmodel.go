@@ -12,11 +12,12 @@ import (
 type (
 	// Repo is a content tree repository
 	Repo interface {
-		New(fpath, hash, contenttype string) *Model
-		Get(ctx context.Context, fpath string) (*Model, []Encoded, error)
+		New(name, hash, contenttype string) *Model
+		Exists(ctx context.Context, name string) (*Model, error)
+		Get(ctx context.Context, name string) (*Model, []Encoded, error)
 		Insert(ctx context.Context, m *Model, enc []*Encoded) error
 		Update(ctx context.Context, m *Model, enc []*Encoded) error
-		Delete(ctx context.Context, fpath string) error
+		Delete(ctx context.Context, name string) error
 		Setup(ctx context.Context) error
 	}
 
@@ -30,14 +31,14 @@ type (
 	//forge:model ct
 	//forge:model:query ct
 	Model struct {
-		FPath       string `model:"fpath,VARCHAR(4095) PRIMARY KEY" query:"fpath;getoneeq,fpath;deleq,fpath"`
+		Name        string `model:"name,VARCHAR(4095) PRIMARY KEY" query:"name;getoneeq,name;deleq,name"`
 		Hash        string `model:"hash,VARCHAR(2047) NOT NULL;index" query:"hash"`
 		ContentType string `model:"contenttype,VARCHAR(255) NOT NULL" query:"contenttype"`
 	}
 
 	//forge:model:query ct
 	ctProps struct {
-		Hash        string `query:"hash;updeq,fpath"`
+		Hash        string `query:"hash;updeq,name"`
 		ContentType string `query:"contenttype"`
 	}
 
@@ -64,16 +65,24 @@ func New(database sqldb.Executor, contentTable, encTable string) Repo {
 	}
 }
 
-func (r *repo) New(fpath, hash, contenttype string) *Model {
+func (r *repo) New(name, hash, contenttype string) *Model {
 	return &Model{
-		FPath:       fpath,
+		Name:        name,
 		Hash:        hash,
 		ContentType: contenttype,
 	}
 }
 
-func (r *repo) Get(ctx context.Context, fpath string) (*Model, []Encoded, error) {
-	m, err := r.ctTable.GetModelEqFPath(ctx, r.db, fpath)
+func (r *repo) Exists(ctx context.Context, name string) (*Model, error) {
+	m, err := r.ctTable.GetModelEqName(ctx, r.db, name)
+	if err != nil {
+		return nil, kerrors.WithMsg(err, "Failed to get content config")
+	}
+	return m, nil
+}
+
+func (r *repo) Get(ctx context.Context, name string) (*Model, []Encoded, error) {
+	m, err := r.ctTable.GetModelEqName(ctx, r.db, name)
 	if err != nil {
 		return nil, nil, kerrors.WithMsg(err, "Failed to get content config")
 	}
@@ -115,24 +124,24 @@ func (r *repo) Update(ctx context.Context, m *Model, enc []*Encoded) error {
 	if err := r.addEncoded(ctx, m, enc); err != nil {
 		return nil
 	}
-	if err := r.ctTable.UpdctPropsEqFPath(ctx, r.db, &ctProps{
+	if err := r.ctTable.UpdctPropsEqName(ctx, r.db, &ctProps{
 		Hash:        m.Hash,
 		ContentType: m.ContentType,
-	}, m.FPath); err != nil {
+	}, m.Name); err != nil {
 		return kerrors.WithMsg(err, "Failed to update content config")
 	}
 	return nil
 }
 
-func (r *repo) Delete(ctx context.Context, fpath string) error {
-	m, err := r.ctTable.GetModelEqFPath(ctx, r.db, fpath)
+func (r *repo) Delete(ctx context.Context, name string) error {
+	m, err := r.ctTable.GetModelEqName(ctx, r.db, name)
 	if err != nil {
 		return kerrors.WithMsg(err, "Failed to get content config")
 	}
 	if err := r.encTable.DelEqFHash(ctx, r.db, m.Hash); err != nil {
 		return kerrors.WithMsg(err, "Failed to delete encoded content configs")
 	}
-	if err := r.ctTable.DelEqFPath(ctx, r.db, fpath); err != nil {
+	if err := r.ctTable.DelEqName(ctx, r.db, name); err != nil {
 		return kerrors.WithMsg(err, "Failed to delete content config")
 	}
 	return nil

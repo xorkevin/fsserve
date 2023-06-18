@@ -10,11 +10,13 @@ import (
 	"xorkevin.dev/fsserve/db"
 	"xorkevin.dev/fsserve/serve/treedbmodel"
 	"xorkevin.dev/kerrors"
+	"xorkevin.dev/kfs"
 )
 
 type (
 	TreeDB interface {
-		GetContent(ctx context.Context, fpath string) (*ContentConfig, error)
+		Get(ctx context.Context, name string) (*ContentConfig, error)
+		Add(ctx context.Context, dst string, cfg ContentConfig) error
 	}
 
 	ContentConfig struct {
@@ -52,8 +54,8 @@ func NewFSTreeDB(fsys fs.FS) *FSTreeDB {
 	}
 }
 
-func (t *FSTreeDB) GetContent(ctx context.Context, fpath string) (*ContentConfig, error) {
-	b, err := fs.ReadFile(t.fsys, fpath)
+func (t *FSTreeDB) Get(ctx context.Context, name string) (*ContentConfig, error) {
+	b, err := fs.ReadFile(t.fsys, name)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, kerrors.WithKind(err, ErrNotFound, "Content config not found")
@@ -65,6 +67,17 @@ func (t *FSTreeDB) GetContent(ctx context.Context, fpath string) (*ContentConfig
 		return nil, kerrors.WithMsg(err, "Failed to parse content config")
 	}
 	return cfg, nil
+}
+
+func (t *FSTreeDB) Add(ctx context.Context, dst string, cfg ContentConfig) error {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return kerrors.WithMsg(err, "Failed marshalling content config to json")
+	}
+	if err := kfs.WriteFile(t.fsys, dst, b, 0o644); err != nil {
+		return kerrors.WithMsg(err, "Failed writing content config")
+	}
+	return nil
 }
 
 type (
@@ -79,8 +92,8 @@ func NewSQLiteTreeDB(d sqldb.Executor, contentTable, encTable string) *SQLiteTre
 	}
 }
 
-func (t *SQLiteTreeDB) GetContent(ctx context.Context, fpath string) (*ContentConfig, error) {
-	m, enc, err := t.repo.Get(ctx, fpath)
+func (t *SQLiteTreeDB) Get(ctx context.Context, name string) (*ContentConfig, error) {
+	m, enc, err := t.repo.Get(ctx, name)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return nil, kerrors.WithKind(err, ErrNotFound, "Content config not found")
@@ -99,4 +112,36 @@ func (t *SQLiteTreeDB) GetContent(ctx context.Context, fpath string) (*ContentCo
 		ContentType: m.ContentType,
 		Encoded:     res,
 	}, nil
+}
+
+func (t *SQLiteTreeDB) Add(ctx context.Context, dst string, cfg ContentConfig) error {
+	m := treedbmodel.Model{
+		Name:        dst,
+		Hash:        cfg.Hash,
+		ContentType: cfg.ContentType,
+	}
+	enc := make([]*treedbmodel.Encoded, 0, len(cfg.Encoded))
+	for n, i := range cfg.Encoded {
+		enc = append(enc, &treedbmodel.Encoded{
+			FHash: m.Hash,
+			Code:  i.Code,
+			Order: n + 1,
+			Hash:  i.Hash,
+		})
+	}
+
+	if _, err := t.repo.Exists(ctx, dst); err != nil {
+		if !errors.Is(err, db.ErrNotFound) {
+			return kerrors.WithMsg(err, "Failed checking dst file")
+		}
+		if err := t.repo.Insert(ctx, &m, enc); err != nil {
+			return kerrors.WithMsg(err, "Failed to insert content config")
+		}
+	} else {
+		if err := t.repo.Update(ctx, &m, enc); err != nil {
+			return kerrors.WithMsg(err, "Failed to update content config")
+		}
+	}
+
+	return nil
 }
