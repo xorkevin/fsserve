@@ -17,6 +17,8 @@ type (
 	TreeDB interface {
 		Get(ctx context.Context, name string) (*ContentConfig, error)
 		Add(ctx context.Context, dst string, cfg ContentConfig) error
+		Rm(ctx context.Context, dst string) error
+		Setup(ctx context.Context) error
 	}
 
 	ContentConfig struct {
@@ -72,11 +74,22 @@ func (t *FSTreeDB) Get(ctx context.Context, name string) (*ContentConfig, error)
 func (t *FSTreeDB) Add(ctx context.Context, dst string, cfg ContentConfig) error {
 	b, err := json.Marshal(cfg)
 	if err != nil {
-		return kerrors.WithMsg(err, "Failed marshalling content config to json")
+		return kerrors.WithMsg(err, "Failed to marshal content config to json")
 	}
 	if err := kfs.WriteFile(t.fsys, dst, b, 0o644); err != nil {
-		return kerrors.WithMsg(err, "Failed writing content config")
+		return kerrors.WithMsg(err, "Failed to write content config")
 	}
+	return nil
+}
+
+func (t *FSTreeDB) Rm(ctx context.Context, dst string) error {
+	if err := kfs.RemoveAll(t.fsys, dst); err != nil {
+		return kerrors.WithMsg(err, "Failed to remove content config")
+	}
+	return nil
+}
+
+func (t *FSTreeDB) Setup(ctx context.Context) error {
 	return nil
 }
 
@@ -143,5 +156,25 @@ func (t *SQLiteTreeDB) Add(ctx context.Context, dst string, cfg ContentConfig) e
 		}
 	}
 
+	return nil
+}
+
+func (t *SQLiteTreeDB) Rm(ctx context.Context, dst string) error {
+	if _, err := t.repo.Exists(ctx, dst); err != nil {
+		if !errors.Is(err, db.ErrNotFound) {
+			return kerrors.WithMsg(err, "Failed checking dst file")
+		}
+		return nil
+	}
+	if err := t.repo.Delete(ctx, dst); err != nil {
+		return kerrors.WithMsg(err, "Failed to delete content config")
+	}
+	return nil
+}
+
+func (t *SQLiteTreeDB) Setup(ctx context.Context) error {
+	if err := t.repo.Setup(ctx); err != nil {
+		return kerrors.WithMsg(err, "Failed to setup sqlite db")
+	}
 	return nil
 }

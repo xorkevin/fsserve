@@ -33,13 +33,30 @@ func (c *Cmd) getTreeCmd() *cobra.Command {
 		Run:               c.execTreeAdd,
 		DisableAutoGenTag: true,
 	}
-
 	addCmd.PersistentFlags().StringVar(&c.treeFlags.src, "contenttype", "c", "content type of src")
 	addCmd.PersistentFlags().StringVarP(&c.treeFlags.src, "src", "s", "", "file to add")
 	addCmd.PersistentFlags().StringArrayVarP(&c.treeFlags.enc, "enc", "e", nil, "encoded versions of the file in the form of (code:filename)")
-	addCmd.PersistentFlags().StringVarP(&c.treeFlags.dst, "dst", "t", "", "destination path")
-
+	addCmd.PersistentFlags().StringVarP(&c.treeFlags.dst, "file", "f", "", "file path")
 	treeCmd.AddCommand(addCmd)
+
+	rmCmd := &cobra.Command{
+		Use:               "rm",
+		Short:             "Removes content and updates the content tree",
+		Long:              `Removes content and updates the content tree`,
+		Run:               c.execTreeRm,
+		DisableAutoGenTag: true,
+	}
+	rmCmd.PersistentFlags().StringVarP(&c.treeFlags.dst, "file", "f", "", "file path")
+	treeCmd.AddCommand(rmCmd)
+
+	initCmd := &cobra.Command{
+		Use:               "init",
+		Short:             "Initializes the content tree db",
+		Long:              `Initializes the content tree db`,
+		Run:               c.execTreeInit,
+		DisableAutoGenTag: true,
+	}
+	treeCmd.AddCommand(initCmd)
 
 	return treeCmd
 }
@@ -64,6 +81,32 @@ func (c *Cmd) execTreeAdd(cmd *cobra.Command, args []string) {
 	}
 	tree := serve.NewTree(c.log.Logger, treedb, contentDir)
 	if err := tree.Add(context.Background(), c.treeFlags.dst, c.treeFlags.ctype, c.treeFlags.src, enc); err != nil {
+		c.logFatal(err)
+		return
+	}
+}
+
+func (c *Cmd) execTreeRm(cmd *cobra.Command, args []string) {
+	contentDir, treedb, err := c.getTree("rw")
+	if err != nil {
+		c.logFatal(err)
+		return
+	}
+	tree := serve.NewTree(c.log.Logger, treedb, contentDir)
+	if err := tree.Rm(context.Background(), c.treeFlags.dst); err != nil {
+		c.logFatal(err)
+		return
+	}
+}
+
+func (c *Cmd) execTreeInit(cmd *cobra.Command, args []string) {
+	contentDir, treedb, err := c.getTree("rw")
+	if err != nil {
+		c.logFatal(err)
+		return
+	}
+	tree := serve.NewTree(c.log.Logger, treedb, contentDir)
+	if err := tree.Setup(context.Background()); err != nil {
 		c.logFatal(err)
 		return
 	}

@@ -66,6 +66,9 @@ func (t *Tree) Add(ctx context.Context, dst string, ctype string, src string, en
 	if err := t.db.Add(ctx, dst, cfg); err != nil {
 		return kerrors.WithMsg(err, fmt.Sprintf("Failed to add content config for %s", dst))
 	}
+	t.log.Info(ctx, "Added content config",
+		klog.AString("dst", dst),
+	)
 	return nil
 }
 
@@ -103,6 +106,10 @@ func (t *Tree) checkAndAddFile(ctx context.Context, srcName string) (string, err
 	if err := t.copyFile(dstName, srcName); err != nil {
 		return "", kerrors.WithMsg(err, fmt.Sprintf("Failed copying %s to %s", srcName, dstName))
 	}
+	t.log.Info(ctx, "Added content file",
+		klog.AString("src", srcName),
+		klog.AString("dst", dstName),
+	)
 	return dstName, nil
 }
 
@@ -147,6 +154,42 @@ func (t *Tree) copyFile(dstName, srcName string) (retErr error) {
 	}()
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
 		return kerrors.WithMsg(err, "Failed copying file")
+	}
+	return nil
+}
+
+func (t *Tree) Rm(ctx context.Context, dst string) error {
+	if dst == "" {
+		return kerrors.WithMsg(nil, "Must provide dst")
+	}
+	cfg, err := t.db.Get(ctx, dst)
+	if err != nil {
+		return kerrors.WithMsg(err, fmt.Sprintf("Failed to get content config for %s", dst))
+	}
+	for _, i := range cfg.Encoded {
+		if err := kfs.RemoveAll(t.contentDir, i.Hash); err != nil {
+			return kerrors.WithMsg(err, "Failed to remove encoded file")
+		}
+		t.log.Info(ctx, "Removed encoded file",
+			klog.AString("code", i.Code),
+			klog.AString("name", i.Hash),
+		)
+	}
+	if err := kfs.RemoveAll(t.contentDir, cfg.Hash); err != nil {
+		return kerrors.WithMsg(err, "Failed to remove content file")
+	}
+	t.log.Info(ctx, "Removed content file",
+		klog.AString("name", cfg.Hash),
+	)
+	if err := t.db.Rm(ctx, dst); err != nil {
+		return kerrors.WithMsg(err, fmt.Sprintf("Failed to remove content config for %s", dst))
+	}
+	return nil
+}
+
+func (t *Tree) Setup(ctx context.Context) error {
+	if err := t.db.Setup(ctx); err != nil {
+		return kerrors.WithMsg(err, "Failed to init tree db")
 	}
 	return nil
 }
