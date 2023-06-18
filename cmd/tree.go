@@ -33,10 +33,10 @@ func (c *Cmd) getTreeCmd() *cobra.Command {
 		Run:               c.execTreeAdd,
 		DisableAutoGenTag: true,
 	}
-	addCmd.PersistentFlags().StringVar(&c.treeFlags.src, "contenttype", "c", "content type of src")
+	addCmd.PersistentFlags().StringVar(&c.treeFlags.src, "contenttype", "", "content type of src")
 	addCmd.PersistentFlags().StringVarP(&c.treeFlags.src, "src", "s", "", "file to add")
 	addCmd.PersistentFlags().StringArrayVarP(&c.treeFlags.enc, "enc", "e", nil, "encoded versions of the file in the form of (code:filename)")
-	addCmd.PersistentFlags().StringVarP(&c.treeFlags.dst, "file", "f", "", "file path")
+	addCmd.PersistentFlags().StringVarP(&c.treeFlags.dst, "file", "f", "", "destination filepath")
 	treeCmd.AddCommand(addCmd)
 
 	rmCmd := &cobra.Command{
@@ -46,7 +46,7 @@ func (c *Cmd) getTreeCmd() *cobra.Command {
 		Run:               c.execTreeRm,
 		DisableAutoGenTag: true,
 	}
-	rmCmd.PersistentFlags().StringVarP(&c.treeFlags.dst, "file", "f", "", "file path")
+	rmCmd.PersistentFlags().StringVarP(&c.treeFlags.dst, "file", "f", "", "filepath")
 	treeCmd.AddCommand(rmCmd)
 
 	initCmd := &cobra.Command{

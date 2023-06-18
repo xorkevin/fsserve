@@ -50,7 +50,7 @@ func (c *Cmd) Execute() {
 		PersistentPreRun:  c.initConfig,
 		DisableAutoGenTag: true,
 	}
-	rootCmd.PersistentFlags().StringVar(&c.rootFlags.cfgFile, "config", "", "config file (default is $XDG_CONFIG_HOME/.fsserve.json)")
+	rootCmd.PersistentFlags().StringVar(&c.rootFlags.cfgFile, "config", "", "config file (default is .fsserve.json)")
 	rootCmd.PersistentFlags().StringVar(&c.rootFlags.logLevel, "log-level", "info", "log level")
 
 	rootCmd.PersistentFlags().StringVarP(&c.serveFlags.base, "base", "b", "", "static files base")
