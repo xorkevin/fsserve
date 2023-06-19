@@ -116,7 +116,7 @@ func (t *Tree) checkAndAddFileFS(ctx context.Context, dir fs.FS, srcName string)
 		}
 	}
 
-	if err := t.copyFile(dstName, srcName); err != nil {
+	if err := t.copyFile(dir, dstName, srcName); err != nil {
 		return "", kerrors.WithMsg(err, fmt.Sprintf("Failed copying %s to %s", srcName, dstName))
 	}
 	t.log.Info(ctx, "Added content file",
@@ -146,7 +146,7 @@ func (t *Tree) hashFile(dir fs.FS, name string) (_ string, retErr error) {
 	return base64.RawURLEncoding.EncodeToString(h.Sum(nil)), nil
 }
 
-func (t *Tree) copyFile(dstName, srcName string) (retErr error) {
+func (t *Tree) copyFile(dir fs.FS, dstName, srcName string) (retErr error) {
 	dstFile, err := kfs.OpenFile(t.contentDir, dstName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return kerrors.WithMsg(err, "Failed opening dst file")
@@ -156,7 +156,7 @@ func (t *Tree) copyFile(dstName, srcName string) (retErr error) {
 			retErr = errors.Join(retErr, kerrors.WithMsg(err, "Failed to close dst file"))
 		}
 	}()
-	srcFile, err := os.Open(srcName)
+	srcFile, err := dir.Open(srcName)
 	if err != nil {
 		return kerrors.WithMsg(err, "Failed opening src file")
 	}
