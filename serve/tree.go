@@ -8,6 +8,8 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
+	"path/filepath"
 
 	"golang.org/x/crypto/blake2b"
 	"xorkevin.dev/kerrors"
@@ -73,15 +75,26 @@ func (t *Tree) Add(ctx context.Context, dst string, ctype string, src string, en
 }
 
 func (t *Tree) checkAndAddFile(ctx context.Context, srcName string) (string, error) {
-	srcInfo, err := os.Stat(srcName)
+	dir, file := path.Split(srcName)
+	dir = path.Clean(dir)
+	file = path.Clean(file)
+	fsys := os.DirFS(filepath.FromSlash(dir))
+	return t.checkAndAddFileFS(ctx, fsys, file)
+}
+
+func (t *Tree) checkAndAddFileFS(ctx context.Context, dir fs.FS, srcName string) (string, error) {
+	srcInfo, err := fs.Stat(dir, srcName)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", kerrors.WithKind(err, ErrNotFound, "Failed to stat src file")
+		}
 		return "", kerrors.WithMsg(err, "Failed to stat src file")
 	}
 	if srcInfo.IsDir() {
 		return "", kerrors.WithMsg(nil, fmt.Sprintf("Src file is dir"))
 	}
 
-	dstName, err := t.hashFile(srcName)
+	dstName, err := t.hashFile(dir, srcName)
 	if err != nil {
 		return "", kerrors.WithMsg(err, "Failed to hash src file")
 	}
@@ -113,8 +126,8 @@ func (t *Tree) checkAndAddFile(ctx context.Context, srcName string) (string, err
 	return dstName, nil
 }
 
-func (t *Tree) hashFile(name string) (_ string, retErr error) {
-	f, err := os.Open(name)
+func (t *Tree) hashFile(dir fs.FS, name string) (_ string, retErr error) {
+	f, err := dir.Open(name)
 	if err != nil {
 		return "", kerrors.WithMsg(err, "Failed opening file")
 	}
