@@ -60,6 +60,7 @@ func (c *Cmd) Execute() {
 	viper.SetDefault("contentdir", "content")
 	viper.SetDefault("treedbengine", "fs")
 	viper.SetDefault("treedb", "tree")
+	viper.SetDefault("sync", serve.SyncConfig{})
 	viper.SetDefault("exttotype", []serve.MimeType{})
 	viper.SetDefault("routes", []serve.Route{})
 	viper.SetDefault("maxheadersize", "1M")

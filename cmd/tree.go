@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"xorkevin.dev/fsserve/serve"
 	"xorkevin.dev/kerrors"
 )
@@ -33,7 +34,7 @@ func (c *Cmd) getTreeCmd() *cobra.Command {
 		Run:               c.execTreeAdd,
 		DisableAutoGenTag: true,
 	}
-	addCmd.PersistentFlags().StringVar(&c.treeFlags.src, "contenttype", "", "content type of src")
+	addCmd.PersistentFlags().StringVar(&c.treeFlags.ctype, "contenttype", "", "content type of src")
 	addCmd.PersistentFlags().StringVarP(&c.treeFlags.src, "src", "s", "", "file to add")
 	addCmd.PersistentFlags().StringArrayVarP(&c.treeFlags.enc, "enc", "e", nil, "encoded versions of the file in the form of (code:filename)")
 	addCmd.PersistentFlags().StringVarP(&c.treeFlags.dst, "file", "f", "", "destination filepath")
@@ -58,6 +59,15 @@ func (c *Cmd) getTreeCmd() *cobra.Command {
 	}
 	treeCmd.AddCommand(initCmd)
 
+	syncCmd := &cobra.Command{
+		Use:               "sync",
+		Short:             "Syncs the content tree db",
+		Long:              `Syncs the content tree db`,
+		Run:               c.execTreeSync,
+		DisableAutoGenTag: true,
+	}
+	treeCmd.AddCommand(syncCmd)
+
 	return treeCmd
 }
 
@@ -70,7 +80,7 @@ func (c *Cmd) execTreeAdd(cmd *cobra.Command, args []string) {
 			return
 		}
 		enc = append(enc, serve.EncodedFile{
-			Code: strings.TrimSpace(code),
+			Code: code,
 			Name: name,
 		})
 	}
@@ -107,6 +117,24 @@ func (c *Cmd) execTreeInit(cmd *cobra.Command, args []string) {
 	}
 	tree := serve.NewTree(c.log.Logger, treedb, contentDir)
 	if err := tree.Setup(context.Background()); err != nil {
+		c.logFatal(err)
+		return
+	}
+}
+
+func (c *Cmd) execTreeSync(cmd *cobra.Command, args []string) {
+	var cfg serve.SyncConfig
+	if err := viper.UnmarshalKey("sync", &cfg); err != nil {
+		c.logFatal(kerrors.WithMsg(err, "Failed to read config sync"))
+		return
+	}
+	contentDir, treedb, err := c.getTree("rw")
+	if err != nil {
+		c.logFatal(err)
+		return
+	}
+	tree := serve.NewTree(c.log.Logger, treedb, contentDir)
+	if err := tree.SyncContent(context.Background(), cfg); err != nil {
 		c.logFatal(err)
 		return
 	}
