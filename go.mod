@@ -10,7 +10,7 @@ require (
 	modernc.org/sqlite v1.23.1
 	xorkevin.dev/forge v0.4.3
 	xorkevin.dev/kerrors v0.1.5
-	xorkevin.dev/kfs v0.1.1
+	xorkevin.dev/kfs v0.1.2
 	xorkevin.dev/klog v0.0.0-20230422031314-3f827239fa5d
 )
 

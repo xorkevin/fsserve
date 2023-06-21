@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"time"
 
 	"golang.org/x/crypto/blake2b"
 	"xorkevin.dev/kerrors"
@@ -60,13 +61,21 @@ func NewTree(log klog.Logger, treedb TreeDB, contentDir fs.FS) *Tree {
 
 func (t *Tree) SyncContent(ctx context.Context, cfg SyncConfig) error {
 	for _, i := range cfg.Dirs {
+		for _, j := range i.Alts {
+			if j.Code == "" {
+				return kerrors.WithMsg(nil, "Must provide encoded file code")
+			}
+		}
+	}
+
+	for _, i := range cfg.Dirs {
 		dst := path.Clean(i.Dst)
 		if i.Exact {
 			enc := make([]EncodedFile, 0, len(i.Alts))
-			for _, i := range i.Alts {
+			for _, j := range i.Alts {
 				enc = append(enc, EncodedFile{
-					Code: i.Code,
-					Name: i.Name,
+					Code: j.Code,
+					Name: j.Name,
 				})
 			}
 			if err := t.Add(ctx, dst, i.ContentType, i.Src, enc); err != nil {
@@ -100,18 +109,33 @@ func (t *Tree) syncContentDir(ctx context.Context, dstPrefix string, ctype strin
 			return nil
 		}
 		dst := path.Join(dstPrefix, p)
+
+		var existingHash string
+		codeToHash := map[string]string{}
+		existingCfg, err := t.db.Get(ctx, dst)
+		if err != nil {
+			if !errors.Is(err, ErrNotFound) {
+				return kerrors.WithMsg(err, fmt.Sprintf("Failed to check existing content config for %s", dst))
+			}
+			existingCfg = nil
+		} else {
+			existingHash = existingCfg.Hash
+			for _, i := range existingCfg.Encoded {
+				codeToHash[i.Code] = i.Hash
+			}
+		}
+
 		cfg := ContentConfig{
 			ContentType: ctype,
 			Encoded:     make([]EncodedContent, 0, len(alts)),
 		}
-		var err error
-		cfg.Hash, err = t.checkAndAddFileFS(ctx, dir, p)
+		cfg.Hash, err = t.checkAndAddFileFS(ctx, existingHash, dir, p)
 		if err != nil {
 			return kerrors.WithMsg(err, fmt.Sprintf("Failed to add file: %s", p))
 		}
 		for _, i := range alts {
 			alt := p + i.Suffix
-			h, err := t.checkAndAddFileFS(ctx, dir, alt)
+			h, err := t.checkAndAddFileFS(ctx, codeToHash[i.Code], dir, alt)
 			if err != nil {
 				if errors.Is(err, ErrNotFound) {
 					t.log.Debug(ctx, "Skipping missing alt file",
@@ -127,6 +151,16 @@ func (t *Tree) syncContentDir(ctx context.Context, dstPrefix string, ctype strin
 				Hash: h,
 			})
 		}
+
+		if existingCfg != nil {
+			if t.equalCfg(cfg, *existingCfg) {
+				t.log.Info(ctx, "Skipping unchanged content config",
+					klog.AString("dst", dst),
+				)
+				return nil
+			}
+		}
+
 		if err := t.db.Add(ctx, dst, cfg); err != nil {
 			return kerrors.WithMsg(err, fmt.Sprintf("Failed to add content config for %s", p))
 		}
@@ -155,21 +189,39 @@ func (t *Tree) Add(ctx context.Context, dst string, ctype string, src string, en
 	if dst == "" {
 		return kerrors.WithMsg(nil, "Must provide dst")
 	}
-	dst = path.Clean(dst)
-	cfg := ContentConfig{
-		ContentType: ctype,
-		Encoded:     make([]EncodedContent, 0, len(encoded)),
-	}
-	var err error
-	cfg.Hash, err = t.checkAndAddFile(ctx, src)
-	if err != nil {
-		return kerrors.WithMsg(err, fmt.Sprintf("Failed to add file: %s", src))
-	}
 	for _, i := range encoded {
 		if i.Code == "" {
 			return kerrors.WithMsg(nil, "Must provide encoded file code")
 		}
-		dstName, err := t.checkAndAddFile(ctx, i.Name)
+	}
+
+	dst = path.Clean(dst)
+
+	var existingHash string
+	codeToHash := map[string]string{}
+	existingCfg, err := t.db.Get(ctx, dst)
+	if err != nil {
+		if !errors.Is(err, ErrNotFound) {
+			return kerrors.WithMsg(err, fmt.Sprintf("Failed to check existing content config for %s", dst))
+		}
+		existingCfg = nil
+	} else {
+		existingHash = existingCfg.Hash
+		for _, i := range existingCfg.Encoded {
+			codeToHash[i.Code] = i.Hash
+		}
+	}
+
+	cfg := ContentConfig{
+		ContentType: ctype,
+		Encoded:     make([]EncodedContent, 0, len(encoded)),
+	}
+	cfg.Hash, err = t.checkAndAddFile(ctx, existingHash, src)
+	if err != nil {
+		return kerrors.WithMsg(err, fmt.Sprintf("Failed to add file: %s", src))
+	}
+	for _, i := range encoded {
+		dstName, err := t.checkAndAddFile(ctx, codeToHash[i.Code], i.Name)
 		if err != nil {
 			return kerrors.WithMsg(err, fmt.Sprintf("Failed to add encoded file: %s", i.Name))
 		}
@@ -177,6 +229,15 @@ func (t *Tree) Add(ctx context.Context, dst string, ctype string, src string, en
 			Code: i.Code,
 			Hash: dstName,
 		})
+	}
+
+	if existingCfg != nil {
+		if t.equalCfg(cfg, *existingCfg) {
+			t.log.Info(ctx, "Skipping unchanged content config",
+				klog.AString("dst", dst),
+			)
+			return nil
+		}
 	}
 
 	if err := t.db.Add(ctx, dst, cfg); err != nil {
@@ -188,15 +249,33 @@ func (t *Tree) Add(ctx context.Context, dst string, ctype string, src string, en
 	return nil
 }
 
-func (t *Tree) checkAndAddFile(ctx context.Context, srcName string) (string, error) {
+func (t *Tree) equalCfg(a, b ContentConfig) bool {
+	if a.Hash != b.Hash {
+		return false
+	}
+	if a.ContentType != b.ContentType {
+		return false
+	}
+	if len(a.Encoded) != len(b.Encoded) {
+		return false
+	}
+	for n, i := range a.Encoded {
+		if i != b.Encoded[n] {
+			return false
+		}
+	}
+	return true
+}
+
+func (t *Tree) checkAndAddFile(ctx context.Context, existingHash string, srcName string) (string, error) {
 	dir, file := path.Split(srcName)
 	dir = path.Clean(dir)
 	file = path.Clean(file)
 	fsys := os.DirFS(filepath.FromSlash(dir))
-	return t.checkAndAddFileFS(ctx, fsys, file)
+	return t.checkAndAddFileFS(ctx, existingHash, fsys, file)
 }
 
-func (t *Tree) checkAndAddFileFS(ctx context.Context, dir fs.FS, srcName string) (string, error) {
+func (t *Tree) checkAndAddFileFS(ctx context.Context, existingHash string, dir fs.FS, srcName string) (string, error) {
 	srcInfo, err := fs.Stat(dir, srcName)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -208,11 +287,43 @@ func (t *Tree) checkAndAddFileFS(ctx context.Context, dir fs.FS, srcName string)
 		return "", kerrors.WithMsg(nil, fmt.Sprintf("Src file is dir"))
 	}
 
+	existingMatchesSize := false
+	if existingHash != "" {
+		if existingInfo, err := fs.Stat(t.contentDir, existingHash); err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				return "", kerrors.WithMsg(err, "Failed to stat existing candidate dst file")
+			}
+		} else {
+			if !existingInfo.IsDir() && existingInfo.Size() == srcInfo.Size() {
+				if !existingInfo.ModTime().Before(srcInfo.ModTime()) {
+					t.log.Info(ctx, "Skipping unchanged content file on matching size and modtime",
+						klog.AString("src", srcName),
+						klog.AString("dst", existingHash),
+					)
+					return existingHash, nil
+				}
+				existingMatchesSize = true
+			}
+		}
+	}
+
 	dstName, err := t.hashFile(dir, srcName)
 	if err != nil {
 		return "", kerrors.WithMsg(err, "Failed to hash src file")
 	}
 
+	if existingHash != "" && dstName == existingHash && existingMatchesSize {
+		if err := kfs.Chtimes(t.contentDir, existingHash, time.Time{}, srcInfo.ModTime()); err != nil {
+			return "", kerrors.WithMsg(err, fmt.Sprintf("Failed to update mod time for dst file %s", existingHash))
+		}
+		t.log.Info(ctx, "Skipping unchanged content file on matching size and hash",
+			klog.AString("src", srcName),
+			klog.AString("dst", existingHash),
+		)
+		return existingHash, nil
+	}
+
+	// need to recheck since dstName may not be equal to existingHash
 	if dstInfo, err := fs.Stat(t.contentDir, dstName); err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
 			return "", kerrors.WithMsg(err, fmt.Sprintf("Failed to stat dst file: %s", dstName))
@@ -222,7 +333,7 @@ func (t *Tree) checkAndAddFileFS(ctx context.Context, dir fs.FS, srcName string)
 			return "", kerrors.WithMsg(nil, fmt.Sprintf("Dst file %s is dir", dstName))
 		}
 		if dstInfo.Size() == srcInfo.Size() && !dstInfo.ModTime().Before(srcInfo.ModTime()) {
-			t.log.Info(ctx, "Skipping present content file",
+			t.log.Info(ctx, "Skipping unchanged content file",
 				klog.AString("src", srcName),
 				klog.AString("dst", dstName),
 			)
