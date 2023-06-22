@@ -14,6 +14,8 @@ type (
 	Repo interface {
 		New(name, hash, contenttype string) *Model
 		Exists(ctx context.Context, name string) (*Model, error)
+		List(ctx context.Context, limit int, after string) ([]Model, error)
+		ListEncoded(ctx context.Context, fhashes []string) ([]Encoded, error)
 		Get(ctx context.Context, name string) (*Model, []Encoded, error)
 		Insert(ctx context.Context, m *Model, enc []*Encoded) error
 		Update(ctx context.Context, m *Model, enc []*Encoded) error
@@ -31,7 +33,7 @@ type (
 	//forge:model ct
 	//forge:model:query ct
 	Model struct {
-		Name        string `model:"name,VARCHAR(4095) PRIMARY KEY" query:"name;getoneeq,name;deleq,name"`
+		Name        string `model:"name,VARCHAR(4095) PRIMARY KEY" query:"name;getoneeq,name;deleq,name;getgroup;getgroupeq,name|gt"`
 		Hash        string `model:"hash,VARCHAR(2047) NOT NULL;index" query:"hash"`
 		ContentType string `model:"contenttype,VARCHAR(255) NOT NULL" query:"contenttype"`
 	}
@@ -46,7 +48,7 @@ type (
 	//forge:model enc
 	//forge:model:query enc
 	Encoded struct {
-		FHash string `model:"fhash,VARCHAR(2047)" query:"fhash;deleq,fhash"`
+		FHash string `model:"fhash,VARCHAR(2047)" query:"fhash;deleq,fhash;getgroupeq,fhash|in"`
 		Code  string `model:"code,VARCHAR(255), PRIMARY KEY (fhash, code)" query:"code"`
 		Order int    `model:"order,INT NOT NULL, UNIQUE (fhash, order)" query:"order;getgroupeq,fhash"`
 		Hash  string `model:"hash,VARCHAR(2047) NOT NULL" query:"hash"`
@@ -77,6 +79,33 @@ func (r *repo) Exists(ctx context.Context, name string) (*Model, error) {
 	m, err := r.ctTable.GetModelEqName(ctx, r.db, name)
 	if err != nil {
 		return nil, kerrors.WithMsg(err, "Failed to get content config")
+	}
+	return m, nil
+}
+
+func (r *repo) List(ctx context.Context, limit int, after string) ([]Model, error) {
+	if after == "" {
+		m, err := r.ctTable.GetModelOrdName(ctx, r.db, true, limit, 0)
+		if err != nil {
+			return nil, kerrors.WithMsg(err, "Failed to get content configs")
+		}
+		return m, nil
+	}
+	m, err := r.ctTable.GetModelGtNameOrdName(ctx, r.db, after, true, limit, 0)
+	if err != nil {
+		return nil, kerrors.WithMsg(err, "Failed to get content configs")
+	}
+	return m, nil
+}
+
+func (r *repo) ListEncoded(ctx context.Context, fhashes []string) ([]Encoded, error) {
+	if len(fhashes) == 0 {
+		return nil, nil
+	}
+
+	m, err := r.encTable.GetEncodedHasFHashOrdFHash(ctx, r.db, fhashes, true, 128*len(fhashes), 0)
+	if err != nil {
+		return nil, kerrors.WithMsg(err, "Failed to get encoded content configs")
 	}
 	return m, nil
 }

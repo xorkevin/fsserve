@@ -69,6 +69,62 @@ func (t *ctModelTable) DelEqName(ctx context.Context, d sqldb.Executor, name str
 	return err
 }
 
+func (t *ctModelTable) GetModelOrdName(ctx context.Context, d sqldb.Executor, orderasc bool, limit, offset int) (_ []Model, retErr error) {
+	order := "DESC"
+	if orderasc {
+		order = "ASC"
+	}
+	res := make([]Model, 0, limit)
+	rows, err := d.QueryContext(ctx, "SELECT name, hash, contenttype FROM "+t.TableName+" ORDER BY name "+order+" LIMIT $1 OFFSET $2;", limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("Failed to close db rows: %w", err))
+		}
+	}()
+	for rows.Next() {
+		var m Model
+		if err := rows.Scan(&m.Name, &m.Hash, &m.ContentType); err != nil {
+			return nil, err
+		}
+		res = append(res, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+func (t *ctModelTable) GetModelGtNameOrdName(ctx context.Context, d sqldb.Executor, name string, orderasc bool, limit, offset int) (_ []Model, retErr error) {
+	order := "DESC"
+	if orderasc {
+		order = "ASC"
+	}
+	res := make([]Model, 0, limit)
+	rows, err := d.QueryContext(ctx, "SELECT name, hash, contenttype FROM "+t.TableName+" WHERE name > $3 ORDER BY name "+order+" LIMIT $1 OFFSET $2;", limit, offset, name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("Failed to close db rows: %w", err))
+		}
+	}()
+	for rows.Next() {
+		var m Model
+		if err := rows.Scan(&m.Name, &m.Hash, &m.ContentType); err != nil {
+			return nil, err
+		}
+		res = append(res, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
 func (t *ctModelTable) UpdctPropsEqName(ctx context.Context, d sqldb.Executor, m *ctProps, name string) error {
 	_, err := d.ExecContext(ctx, "UPDATE "+t.TableName+" SET (hash, contenttype) = ROW($1, $2) WHERE name = $3;", m.Hash, m.ContentType, name)
 	if err != nil {
@@ -121,6 +177,47 @@ func (t *encModelTable) InsertBulk(ctx context.Context, d sqldb.Executor, models
 func (t *encModelTable) DelEqFHash(ctx context.Context, d sqldb.Executor, fhash string) error {
 	_, err := d.ExecContext(ctx, "DELETE FROM "+t.TableName+" WHERE fhash = $1;", fhash)
 	return err
+}
+
+func (t *encModelTable) GetEncodedHasFHashOrdFHash(ctx context.Context, d sqldb.Executor, fhashs []string, orderasc bool, limit, offset int) (_ []Encoded, retErr error) {
+	paramCount := 2
+	args := make([]interface{}, 0, paramCount+len(fhashs))
+	args = append(args, limit, offset)
+	var placeholdersfhashs string
+	{
+		placeholders := make([]string, 0, len(fhashs))
+		for _, i := range fhashs {
+			paramCount++
+			placeholders = append(placeholders, fmt.Sprintf("($%d)", paramCount))
+			args = append(args, i)
+		}
+		placeholdersfhashs = strings.Join(placeholders, ", ")
+	}
+	order := "DESC"
+	if orderasc {
+		order = "ASC"
+	}
+	res := make([]Encoded, 0, limit)
+	rows, err := d.QueryContext(ctx, "SELECT fhash, code, order, hash FROM "+t.TableName+" WHERE fhash IN (VALUES "+placeholdersfhashs+") ORDER BY fhash "+order+" LIMIT $1 OFFSET $2;", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("Failed to close db rows: %w", err))
+		}
+	}()
+	for rows.Next() {
+		var m Encoded
+		if err := rows.Scan(&m.FHash, &m.Code, &m.Order, &m.Hash); err != nil {
+			return nil, err
+		}
+		res = append(res, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 func (t *encModelTable) GetEncodedEqFHashOrdOrder(ctx context.Context, d sqldb.Executor, fhash string, orderasc bool, limit, offset int) (_ []Encoded, retErr error) {

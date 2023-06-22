@@ -12,10 +12,11 @@ import (
 
 type (
 	treeFlags struct {
-		ctype string
-		src   string
-		enc   []string
-		dst   string
+		ctype   string
+		src     string
+		enc     []string
+		dst     string
+		rmAfter bool
 	}
 )
 
@@ -66,6 +67,7 @@ func (c *Cmd) getTreeCmd() *cobra.Command {
 		Run:               c.execTreeSync,
 		DisableAutoGenTag: true,
 	}
+	syncCmd.PersistentFlags().BoolVar(&c.treeFlags.rmAfter, "rm-after", false, "removes unpresent content")
 	treeCmd.AddCommand(syncCmd)
 
 	return treeCmd
@@ -134,7 +136,7 @@ func (c *Cmd) execTreeSync(cmd *cobra.Command, args []string) {
 		return
 	}
 	tree := serve.NewTree(c.log.Logger, treedb, contentDir)
-	if err := tree.SyncContent(context.Background(), cfg); err != nil {
+	if err := tree.SyncContent(context.Background(), cfg, c.treeFlags.rmAfter); err != nil {
 		c.logFatal(err)
 		return
 	}

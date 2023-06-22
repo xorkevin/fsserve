@@ -59,7 +59,7 @@ func NewTree(log klog.Logger, treedb TreeDB, contentDir fs.FS) *Tree {
 	}
 }
 
-func (t *Tree) SyncContent(ctx context.Context, cfg SyncConfig) error {
+func (t *Tree) SyncContent(ctx context.Context, cfg SyncConfig, rmAfter bool) error {
 	for _, i := range cfg.Dirs {
 		for _, j := range i.Alts {
 			if j.Code == "" {
@@ -68,6 +68,7 @@ func (t *Tree) SyncContent(ctx context.Context, cfg SyncConfig) error {
 		}
 	}
 
+	dstSet := map[string]struct{}{}
 	for _, i := range cfg.Dirs {
 		dst := path.Clean(i.Dst)
 		if i.Exact {
@@ -81,6 +82,7 @@ func (t *Tree) SyncContent(ctx context.Context, cfg SyncConfig) error {
 			if err := t.Add(ctx, dst, i.ContentType, i.Src, enc); err != nil {
 				return err
 			}
+			dstSet[dst] = struct{}{}
 		} else {
 			r, err := regexp.Compile(i.Match)
 			if err != nil {
@@ -91,15 +93,45 @@ func (t *Tree) SyncContent(ctx context.Context, cfg SyncConfig) error {
 			if err != nil {
 				return kerrors.WithMsg(err, fmt.Sprintf("Failed to read root for dir %s", i.Src))
 			}
-			if err := t.syncContentDir(ctx, dst, i.ContentType, dir, r, i.Alts, ".", fs.FileInfoToDirEntry(info)); err != nil {
+			if err := t.syncContentDir(ctx, dstSet, dst, i.ContentType, dir, r, i.Alts, ".", fs.FileInfoToDirEntry(info)); err != nil {
 				return kerrors.WithMsg(err, fmt.Sprintf("Failed to sync dir %s to %s", i.Src, dst))
 			}
 		}
 	}
+
+	if rmAfter {
+		contentSet := map[string]struct{}{}
+		if err := t.db.Iterate(ctx, func(ctx context.Context, name string, cfg ContentConfig) error {
+			if _, ok := dstSet[name]; ok {
+				contentSet[cfg.Hash] = struct{}{}
+				for _, i := range cfg.Encoded {
+					contentSet[i.Hash] = struct{}{}
+				}
+				return nil
+			}
+			return t.rmContent(ctx, name, cfg)
+		}); err != nil {
+			return kerrors.WithMsg(err, "Failed iterating through tree db")
+		}
+
+		entries, err := fs.ReadDir(t.contentDir, ".")
+		if err != nil {
+			return kerrors.WithMsg(err, "Failed to read root content dir")
+		}
+		for _, i := range entries {
+			name := i.Name()
+			if _, ok := contentSet[name]; !ok {
+				if err := kfs.RemoveAll(t.contentDir, name); err != nil {
+					return kerrors.WithMsg(err, fmt.Sprintf("Failed to remove content file: %s", name))
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
-func (t *Tree) syncContentDir(ctx context.Context, dstPrefix string, ctype string, dir fs.FS, r *regexp.Regexp, alts []EncodedAlts, p string, entry fs.DirEntry) error {
+func (t *Tree) syncContentDir(ctx context.Context, dstSet map[string]struct{}, dstPrefix string, ctype string, dir fs.FS, r *regexp.Regexp, alts []EncodedAlts, p string, entry fs.DirEntry) error {
 	if !entry.IsDir() {
 		if !r.MatchString(p) {
 			t.log.Debug(ctx, "Skipping unmatched file",
@@ -154,6 +186,7 @@ func (t *Tree) syncContentDir(ctx context.Context, dstPrefix string, ctype strin
 
 		if existingCfg != nil {
 			if t.equalCfg(cfg, *existingCfg) {
+				dstSet[dst] = struct{}{}
 				t.log.Info(ctx, "Skipping unchanged content config",
 					klog.AString("dst", dst),
 				)
@@ -164,6 +197,7 @@ func (t *Tree) syncContentDir(ctx context.Context, dstPrefix string, ctype strin
 		if err := t.db.Add(ctx, dst, cfg); err != nil {
 			return kerrors.WithMsg(err, fmt.Sprintf("Failed to add content config for %s", p))
 		}
+		dstSet[dst] = struct{}{}
 		t.log.Info(ctx, "Added content config",
 			klog.AString("dst", dst),
 		)
@@ -178,7 +212,7 @@ func (t *Tree) syncContentDir(ctx context.Context, dstPrefix string, ctype strin
 		klog.AString("src", p),
 	)
 	for _, i := range entries {
-		if err := t.syncContentDir(ctx, dstPrefix, ctype, dir, r, alts, path.Join(p, i.Name()), i); err != nil {
+		if err := t.syncContentDir(ctx, dstSet, dstPrefix, ctype, dir, r, alts, path.Join(p, i.Name()), i); err != nil {
 			return err
 		}
 	}
@@ -396,15 +430,19 @@ func (t *Tree) copyFile(dir fs.FS, dstName, srcName string) (retErr error) {
 	return nil
 }
 
-func (t *Tree) Rm(ctx context.Context, dst string) error {
-	if dst == "" {
-		return kerrors.WithMsg(nil, "Must provide dst")
+func (t *Tree) Rm(ctx context.Context, name string) error {
+	if name == "" {
+		return kerrors.WithMsg(nil, "Must provide name")
 	}
-	dst = path.Clean(dst)
-	cfg, err := t.db.Get(ctx, dst)
+	name = path.Clean(name)
+	cfg, err := t.db.Get(ctx, name)
 	if err != nil {
-		return kerrors.WithMsg(err, fmt.Sprintf("Failed to get content config for %s", dst))
+		return kerrors.WithMsg(err, fmt.Sprintf("Failed to get content config for %s", name))
 	}
+	return t.rmContent(ctx, name, *cfg)
+}
+
+func (t *Tree) rmContent(ctx context.Context, name string, cfg ContentConfig) error {
 	for _, i := range cfg.Encoded {
 		if err := kfs.RemoveAll(t.contentDir, i.Hash); err != nil {
 			return kerrors.WithMsg(err, "Failed to remove encoded file")
@@ -420,9 +458,12 @@ func (t *Tree) Rm(ctx context.Context, dst string) error {
 	t.log.Info(ctx, "Removed content file",
 		klog.AString("name", cfg.Hash),
 	)
-	if err := t.db.Rm(ctx, dst); err != nil {
-		return kerrors.WithMsg(err, fmt.Sprintf("Failed to remove content config for %s", dst))
+	if err := t.db.Rm(ctx, name); err != nil {
+		return kerrors.WithMsg(err, fmt.Sprintf("Failed to remove content config for %s", name))
 	}
+	t.log.Info(ctx, "Removed content config",
+		klog.AString("name", name),
+	)
 	return nil
 }
 
