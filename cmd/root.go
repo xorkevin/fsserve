@@ -124,6 +124,9 @@ func (c *Cmd) getTreeDB(rootDir fs.FS, base string, mode string) (serve.TreeDB, 
 			q.Set("mode", mode)
 			u.RawQuery = q.Encode()
 			d := db.NewSQLClient(c.log.Logger.Sublogger("db"), u.String())
+			if err := d.Init(); err != nil {
+				return nil, kerrors.WithMsg(err, "Failed to init sqlite db client")
+			}
 
 			c.log.Info(context.Background(), "Using treedbengine",
 				klog.AString("db.engine", "sqlite"),

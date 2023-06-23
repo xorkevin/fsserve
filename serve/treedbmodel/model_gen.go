@@ -140,7 +140,7 @@ type (
 )
 
 func (t *encModelTable) Setup(ctx context.Context, d sqldb.Executor) error {
-	_, err := d.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS "+t.TableName+" (fhash VARCHAR(2047), code VARCHAR(255), PRIMARY KEY (fhash, code), order INT NOT NULL, UNIQUE (fhash, order), hash VARCHAR(2047) NOT NULL);")
+	_, err := d.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS "+t.TableName+" (fhash VARCHAR(2047), code VARCHAR(255), ord INT NOT NULL, hash VARCHAR(2047) NOT NULL, PRIMARY KEY (fhash, code), UNIQUE (fhash, ord));")
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func (t *encModelTable) Setup(ctx context.Context, d sqldb.Executor) error {
 }
 
 func (t *encModelTable) Insert(ctx context.Context, d sqldb.Executor, m *Encoded) error {
-	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (fhash, code, order, hash) VALUES ($1, $2, $3, $4);", m.FHash, m.Code, m.Order, m.Hash)
+	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (fhash, code, ord, hash) VALUES ($1, $2, $3, $4);", m.FHash, m.Code, m.Order, m.Hash)
 	if err != nil {
 		return err
 	}
@@ -167,7 +167,7 @@ func (t *encModelTable) InsertBulk(ctx context.Context, d sqldb.Executor, models
 		placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d)", n+1, n+2, n+3, n+4))
 		args = append(args, m.FHash, m.Code, m.Order, m.Hash)
 	}
-	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (fhash, code, order, hash) VALUES "+strings.Join(placeholders, ", ")+conflictSQL+";", args...)
+	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (fhash, code, ord, hash) VALUES "+strings.Join(placeholders, ", ")+conflictSQL+";", args...)
 	if err != nil {
 		return err
 	}
@@ -198,7 +198,7 @@ func (t *encModelTable) GetEncodedHasFHashOrdFHash(ctx context.Context, d sqldb.
 		order = "ASC"
 	}
 	res := make([]Encoded, 0, limit)
-	rows, err := d.QueryContext(ctx, "SELECT fhash, code, order, hash FROM "+t.TableName+" WHERE fhash IN (VALUES "+placeholdersfhashs+") ORDER BY fhash "+order+" LIMIT $1 OFFSET $2;", args...)
+	rows, err := d.QueryContext(ctx, "SELECT fhash, code, ord, hash FROM "+t.TableName+" WHERE fhash IN (VALUES "+placeholdersfhashs+") ORDER BY fhash "+order+" LIMIT $1 OFFSET $2;", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +226,7 @@ func (t *encModelTable) GetEncodedEqFHashOrdOrder(ctx context.Context, d sqldb.E
 		order = "ASC"
 	}
 	res := make([]Encoded, 0, limit)
-	rows, err := d.QueryContext(ctx, "SELECT fhash, code, order, hash FROM "+t.TableName+" WHERE fhash = $3 ORDER BY order "+order+" LIMIT $1 OFFSET $2;", limit, offset, fhash)
+	rows, err := d.QueryContext(ctx, "SELECT fhash, code, ord, hash FROM "+t.TableName+" WHERE fhash = $3 ORDER BY ord "+order+" LIMIT $1 OFFSET $2;", limit, offset, fhash)
 	if err != nil {
 		return nil, err
 	}

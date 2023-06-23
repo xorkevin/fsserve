@@ -49,9 +49,9 @@ type (
 	//forge:model:query enc
 	Encoded struct {
 		FHash string `model:"fhash,VARCHAR(2047)" query:"fhash;deleq,fhash;getgroupeq,fhash|in"`
-		Code  string `model:"code,VARCHAR(255), PRIMARY KEY (fhash, code)" query:"code"`
-		Order int    `model:"order,INT NOT NULL, UNIQUE (fhash, order)" query:"order;getgroupeq,fhash"`
-		Hash  string `model:"hash,VARCHAR(2047) NOT NULL" query:"hash"`
+		Code  string `model:"code,VARCHAR(255)" query:"code"`
+		Order int    `model:"ord,INT NOT NULL" query:"ord;getgroupeq,fhash"`
+		Hash  string `model:"hash,VARCHAR(2047) NOT NULL, PRIMARY KEY (fhash, code), UNIQUE (fhash, ord)" query:"hash"`
 	}
 )
 
