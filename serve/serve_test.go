@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -33,9 +34,14 @@ func TestServer(t *testing.T) {
 		"static/testfile.js":       `this is a test js file`,
 		"static/fileunknownext":    `<!DOCTYPE HTML>`,
 		"static/test.html":         `sample html file`,
-		"subdir/textfile":          `sample text file`,
 		"manifest.json":            `this is a test json file`,
 		"index.html":               `this is a test index html file`,
+	}
+	srcGzipFiles := []string{
+		"static/testfile.js",
+		"static/test.html",
+		"manifest.json",
+		"index.html",
 	}
 	{
 		var filemode fs.FileMode = 0o644
@@ -46,11 +52,7 @@ func TestServer(t *testing.T) {
 			assert.NoError(os.WriteFile(name, []byte(v), filemode))
 		}
 		gw := gzip.NewWriter(nil)
-		for _, i := range []string{
-			"static/testfile.js",
-			"manifest.json",
-			"index.html",
-		} {
+		for _, i := range srcGzipFiles {
 			var b bytes.Buffer
 			gw.Reset(&b)
 			_, err := gw.Write([]byte(srcFiles[i]))
@@ -144,459 +146,225 @@ func TestServer(t *testing.T) {
 		assert.Equal(srcFiles["static/testfile.js"], rec.Body.String())
 	}
 
-	// for _, tc := range []struct {
-	// 	Path       string
-	// 	ReqHeaders map[string]string
-	// 	RemoteAddr string
-	// 	Status     int
-	// 	ResHeaders map[string]string
-	// 	Body       string
-	// 	Compressed bool
-	// 	RealIP     string
-	// 	OtherLogs  []string
-	// }{
-	// 	{
-	// 		Path: "/static/icon/someicon.png",
-	// 		ReqHeaders: map[string]string{
-	// 			headerXForwardedFor: "172.16.0.2, 10.0.0.4, 10.0.0.3",
-	// 		},
-	// 		RemoteAddr: "172.16.0.3:1234",
-	// 		Status:     http.StatusOK,
-	// 		ResHeaders: map[string]string{
-	// 			headerCacheControl: "public, max-age=31536000, no-cache",
-	// 			headerContentType:  "image/png",
-	// 		},
-	// 		Body:   `this is a test image file`,
-	// 		RealIP: "172.16.0.3",
-	// 	},
-	// 	{
-	// 		Path: "/static/testfile.js",
-	// 		ReqHeaders: map[string]string{
-	// 			headerXForwardedFor: "172.16.0.2, 10.0.0.4, 10.0.0.3",
-	// 		},
-	// 		RemoteAddr: "10.0.0.2:1234",
-	// 		Status:     http.StatusOK,
-	// 		ResHeaders: map[string]string{
-	// 			headerCacheControl: "public, max-age=31536000, immutable",
-	// 			headerContentType:  "text/javascript; charset=utf-8",
-	// 		},
-	// 		Body:       `this is a test js file`,
-	// 		Compressed: true,
-	// 		RealIP:     "172.16.0.2",
-	// 	},
-	// 	{
-	// 		Path: "/manifest.json",
-	// 		ReqHeaders: map[string]string{
-	// 			headerXForwardedFor: "bogus, 10.0.0.4, 10.0.0.3",
-	// 		},
-	// 		RemoteAddr: "10.0.0.2:1234",
-	// 		Status:     http.StatusOK,
-	// 		ResHeaders: map[string]string{
-	// 			headerCacheControl: "public, max-age=31536000, no-cache",
-	// 			headerContentType:  "application/json",
-	// 		},
-	// 		Body:       `this is a test json file`,
-	// 		Compressed: true,
-	// 		RealIP:     "10.0.0.2",
-	// 	},
-	// 	{
-	// 		Path: "/someotherpath",
-	// 		ReqHeaders: map[string]string{
-	// 			headerXForwardedFor: "10.0.0.5, 10.0.0.4, 10.0.0.3",
-	// 		},
-	// 		RemoteAddr: "10.0.0.2:1234",
-	// 		Status:     http.StatusOK,
-	// 		ResHeaders: map[string]string{
-	// 			headerCacheControl: "public, max-age=31536000, no-cache",
-	// 			headerContentType:  "text/html; charset=utf-8",
-	// 		},
-	// 		Body:       `this is a test index html file`,
-	// 		Compressed: true,
-	// 		RealIP:     "10.0.0.5",
-	// 	},
-	// 	{
-	// 		Path:       "/index",
-	// 		RemoteAddr: "10.0.0.2:1234",
-	// 		Status:     http.StatusOK,
-	// 		ResHeaders: map[string]string{
-	// 			headerCacheControl: "public, max-age=31536000, no-cache",
-	// 			headerContentType:  "text/html; charset=utf-8",
-	// 		},
-	// 		Body:       `this is a test index html file`,
-	// 		Compressed: true,
-	// 		RealIP:     "10.0.0.2",
-	// 	},
-	// 	{
-	// 		Path:       "/static/fileunknownext",
-	// 		RemoteAddr: "10.0.0.2:1234",
-	// 		Status:     http.StatusOK,
-	// 		ResHeaders: map[string]string{
-	// 			headerCacheControl: "public, max-age=31536000, immutable",
-	// 			headerContentType:  "text/html; charset=utf-8",
-	// 		},
-	// 		Body:       `<!DOCTYPE HTML>`,
-	// 		Compressed: false,
-	// 		RealIP:     "10.0.0.2",
-	// 	},
-	// 	{
-	// 		Path:       "/static/bogus",
-	// 		RemoteAddr: "10.0.0.2:1234",
-	// 		Status:     http.StatusNotFound,
-	// 		RealIP:     "10.0.0.2",
-	// 		OtherLogs:  []string{"Failed to stat file"},
-	// 	},
-	// 	{
-	// 		Path:       "/bogus",
-	// 		RemoteAddr: "10.0.0.2:1234",
-	// 		Status:     http.StatusNotFound,
-	// 		RealIP:     "10.0.0.2",
-	// 		OtherLogs:  []string{"Failed to stat file"},
-	// 	},
-	// 	{
-	// 		Path:       "/subdir",
-	// 		RemoteAddr: "10.0.0.2:1234",
-	// 		Status:     http.StatusNotFound,
-	// 		RealIP:     "10.0.0.2",
-	// 		OtherLogs:  []string{"is a directory"},
-	// 	},
-	// 	{
-	// 		Path:       "/static/test.html",
-	// 		RemoteAddr: "10.0.0.2:1234",
-	// 		Status:     http.StatusOK,
-	// 		ResHeaders: map[string]string{
-	// 			headerCacheControl: "public, max-age=31536000, immutable",
-	// 			headerContentType:  "text/html; charset=utf-8",
-	// 		},
-	// 		Body:       `sample html file`,
-	// 		Compressed: false,
-	// 		RealIP:     "10.0.0.2",
-	// 	},
-	// } {
-	// 	tc := tc
-	// 	t.Run(tc.Path, func(t *testing.T) {
-	// 		t.Parallel()
+	assert.NoError(tree.SyncContent(context.Background(), SyncConfig{
+		Dirs: []SyncDirConfig{
+			{
+				Dst:   "static",
+				Src:   path.Join(srcDir, "static"),
+				Match: `\.(?:html|js|png)$`,
+				Alts: []EncodedAlts{
+					{
+						Code:   "gzip",
+						Suffix: ".gz",
+					},
+				},
+			},
+			{
+				Dst:   "static/fileunknownext",
+				Exact: true,
+				Src:   path.Join(srcDir, "static/fileunknownext"),
+			},
+			{
+				Dst:   "manifest.json",
+				Exact: true,
+				Src:   path.Join(srcDir, "manifest.json"),
+				Alts: []EncodedAlts{
+					{
+						Code: "gzip",
+						Name: path.Join(srcDir, "manifest.json.gz"),
+					},
+				},
+			},
+			{
+				Dst:   "index.html",
+				Exact: true,
+				Src:   path.Join(srcDir, "index.html"),
+				Alts: []EncodedAlts{
+					{
+						Code: "gzip",
+						Name: path.Join(srcDir, "index.html.gz"),
+					},
+				},
+			},
+		},
+	}, false))
+	assert.Equal(len(srcFiles)+len(srcGzipFiles), len(contentDir.Fsys))
 
-	// 		assert := require.New(t)
+	for _, tc := range []struct {
+		Name       string
+		Path       string
+		ReqHeaders map[string]string
+		Status     int
+		ResHeaders map[string]string
+		Body       string
+		Compressed bool
+	}{
+		{
+			Name: "file without compressed encoding",
+			Path: "/static/icon/someicon.png",
+			ReqHeaders: map[string]string{
+				headerAcceptEncoding: "gzip",
+			},
+			Status: http.StatusOK,
+			ResHeaders: map[string]string{
+				headerCacheControl: "public, max-age=31536000, no-cache",
+				headerContentType:  "image/png",
+			},
+			Body: `this is a test image file`,
+		},
+		{
+			Name: "file with compressed encoding",
+			Path: "/static/testfile.js",
+			ReqHeaders: map[string]string{
+				headerAcceptEncoding: "gzip",
+			},
+			Status: http.StatusOK,
+			ResHeaders: map[string]string{
+				headerCacheControl: "public, max-age=31536000, immutable",
+				headerContentType:  "text/javascript; charset=utf-8",
+			},
+			Body:       `this is a test js file`,
+			Compressed: true,
+		},
+		{
+			Name: "file with exact routing rule match",
+			Path: "/manifest.json",
+			ReqHeaders: map[string]string{
+				headerAcceptEncoding: "gzip",
+			},
+			Status: http.StatusOK,
+			ResHeaders: map[string]string{
+				headerCacheControl: "public, max-age=31536000, no-cache",
+				headerContentType:  "application/json",
+			},
+			Body:       `this is a test json file`,
+			Compressed: true,
+		},
+		{
+			Name: "fall back on index",
+			Path: "/someotherpath",
+			ReqHeaders: map[string]string{
+				headerAcceptEncoding: "gzip",
+			},
+			Status: http.StatusOK,
+			ResHeaders: map[string]string{
+				headerCacheControl: "public, max-age=31536000, no-cache",
+				headerContentType:  "text/html; charset=utf-8",
+			},
+			Body:       `this is a test index html file`,
+			Compressed: true,
+		},
+		{
+			Name:   "uses fallback content type",
+			Path:   "/static/fileunknownext",
+			Status: http.StatusOK,
+			ResHeaders: map[string]string{
+				headerCacheControl: "public, max-age=31536000, immutable",
+				headerContentType:  "application/octet-stream",
+			},
+			Body: `<!DOCTYPE HTML>`,
+		},
+		{
+			Name:   "missing file in directory route",
+			Path:   "/static/bogus",
+			Status: http.StatusNotFound,
+		},
+		{
+			Name:   "missing exact file",
+			Path:   "/bogus",
+			Status: http.StatusNotFound,
+		},
+		{
+			Name:   "cannot serve directory",
+			Path:   "/subdir",
+			Status: http.StatusNotFound,
+		},
+	} {
+		tc := tc
+		t.Run(tc.Name, func(t *testing.T) {
+			t.Parallel()
 
-	// 		var logb bytes.Buffer
-	// 		server := NewServer(klog.New(klog.OptHandler(klog.NewJSONSlogHandler(klog.NewSyncWriter(&logb)))), fsys, Config{
-	// 			Instance: "testinstance",
-	// 			Proxies: []netip.Prefix{
-	// 				netip.MustParsePrefix("10.0.0.0/8"),
-	// 			},
-	// 		})
-	// 		assert.NoError(server.Mount(routes))
+			assert := require.New(t)
 
-	// 		jdec := json.NewDecoder(&logb)
-	// 		for _, i := range []mountLog{
-	// 			{
-	// 				Level:  klog.LevelInfo.String(),
-	// 				Msg:    "Handle route",
-	// 				Prefix: "/static/icon/",
-	// 				FSPath: "static/icon",
-	// 				Dir:    true,
-	// 			},
-	// 			{
-	// 				Level:  klog.LevelInfo.String(),
-	// 				Msg:    "Handle route",
-	// 				Prefix: "/static/",
-	// 				FSPath: "static",
-	// 				Dir:    true,
-	// 			},
-	// 			{
-	// 				Level:    klog.LevelInfo.String(),
-	// 				Msg:      "Compressed",
-	// 				Prefix:   "/static/",
-	// 				Encoding: "gzip",
-	// 				Test:     `\.(html|js|css|json)(\.map)?$`,
-	// 				Suffix:   ".gz",
-	// 			},
-	// 			{
-	// 				Level:    klog.LevelInfo.String(),
-	// 				Msg:      "Compressed",
-	// 				Prefix:   "/static/",
-	// 				Encoding: "deflate",
-	// 				Test:     `\.(html|js|css|json)(\.map)?$`,
-	// 				Suffix:   ".zz",
-	// 			},
-	// 			{
-	// 				Level:  klog.LevelInfo.String(),
-	// 				Msg:    "Handle route",
-	// 				Prefix: "/manifest.json",
-	// 				FSPath: "manifest.json",
-	// 			},
-	// 			{
-	// 				Level:    klog.LevelInfo.String(),
-	// 				Msg:      "Compressed",
-	// 				Prefix:   "/manifest.json",
-	// 				Encoding: "gzip",
-	// 				Suffix:   ".gz",
-	// 			},
-	// 			{
-	// 				Level:    klog.LevelInfo.String(),
-	// 				Msg:      "Compressed",
-	// 				Prefix:   "/manifest.json",
-	// 				Encoding: "deflate",
-	// 				Suffix:   ".zz",
-	// 			},
-	// 			{
-	// 				Level:  klog.LevelInfo.String(),
-	// 				Msg:    "Handle route",
-	// 				Prefix: "/bogus",
-	// 				FSPath: "bogus",
-	// 			},
-	// 			{
-	// 				Level:  klog.LevelInfo.String(),
-	// 				Msg:    "Handle route",
-	// 				Prefix: "/subdir",
-	// 				FSPath: "subdir",
-	// 			},
-	// 			{
-	// 				Level:  klog.LevelInfo.String(),
-	// 				Msg:    "Handle route",
-	// 				Prefix: "/",
-	// 				FSPath: "index.html",
-	// 			},
-	// 			{
-	// 				Level:    klog.LevelInfo.String(),
-	// 				Msg:      "Compressed",
-	// 				Prefix:   "/",
-	// 				Encoding: "gzip",
-	// 				Suffix:   ".gz",
-	// 			},
-	// 			{
-	// 				Level:    klog.LevelInfo.String(),
-	// 				Msg:      "Compressed",
-	// 				Prefix:   "/",
-	// 				Encoding: "deflate",
-	// 				Suffix:   ".zz",
-	// 			},
-	// 		} {
-	// 			var v mountLog
-	// 			assert.NoError(jdec.Decode(&v))
-	// 			assert.Equal(i, v)
-	// 		}
-	// 		assert.False(jdec.More())
+			req := httptest.NewRequest(http.MethodGet, tc.Path, nil)
+			for k, v := range tc.ReqHeaders {
+				req.Header.Set(k, v)
+			}
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
 
-	// 		func() {
-	// 			var etag string
-	// 			{
-	// 				req := httptest.NewRequest(http.MethodGet, tc.Path, nil)
-	// 				for k, v := range tc.ReqHeaders {
-	// 					req.Header.Set(k, v)
-	// 				}
-	// 				req.RemoteAddr = tc.RemoteAddr
-	// 				rec := httptest.NewRecorder()
-	// 				server.ServeHTTP(rec, req)
+			assert.Equal(tc.Status, rec.Code)
 
-	// 				assert.Equal(tc.Status, rec.Code)
+			for k, v := range tc.ResHeaders {
+				assert.Equal(v, rec.Result().Header.Get(k))
+			}
 
-	// 				for k, v := range tc.ResHeaders {
-	// 					assert.Equal(v, rec.Result().Header.Get(k))
-	// 				}
+			if tc.Status != http.StatusOK {
+				for _, i := range []string{
+					headerCacheControl,
+					headerContentEncoding,
+					headerETag,
+					headerVary,
+				} {
+					assert.Equal("", rec.Result().Header.Get(i))
+				}
+				return
+			}
 
-	// 				if tc.Status != http.StatusOK {
-	// 					for _, i := range []string{
-	// 						headerCacheControl,
-	// 						headerContentEncoding,
-	// 						headerETag,
-	// 					} {
-	// 						assert.Equal("", rec.Result().Header.Get(i))
-	// 					}
-	// 					assert.Equal("text/plain; charset=utf-8", rec.Result().Header.Get(headerContentType))
-	// 					return
-	// 				}
+			if tc.Compressed {
+				assert.Equal("gzip", rec.Result().Header.Get(headerContentEncoding))
+				gr, err := gzip.NewReader(rec.Body)
+				assert.NoError(err)
+				var b bytes.Buffer
+				_, err = io.Copy(&b, gr)
+				assert.NoError(err)
+				assert.Equal(tc.Body, b.String())
+			} else {
+				assert.Equal(tc.Body, rec.Body.String())
+			}
 
-	// 				assert.Equal(tc.Body, rec.Body.String())
+			etag := rec.Result().Header.Get(headerETag)
+			assert.True(etag != "")
+			{
+				req := httptest.NewRequest(http.MethodGet, tc.Path, nil)
+				for k, v := range tc.ReqHeaders {
+					req.Header.Set(k, v)
+				}
+				req.Header.Set(headerIfNoneMatch, etag)
+				rec := httptest.NewRecorder()
+				server.ServeHTTP(rec, req)
 
-	// 				etag = rec.Result().Header.Get(headerETag)
-	// 				assert.True(etag != "")
-	// 			}
-	// 			{
-	// 				req := httptest.NewRequest(http.MethodGet, tc.Path, nil)
-	// 				for k, v := range tc.ReqHeaders {
-	// 					req.Header.Set(k, v)
-	// 				}
-	// 				req.RemoteAddr = tc.RemoteAddr
-	// 				req.Header.Set(headerIfNoneMatch, etag)
-	// 				rec := httptest.NewRecorder()
-	// 				server.ServeHTTP(rec, req)
+				assert.Equal(http.StatusNotModified, rec.Code)
+				for _, i := range []string{
+					headerContentEncoding,
+					headerContentType,
+				} {
+					assert.Equal("", rec.Result().Header.Get(i))
+				}
+			}
+		})
+	}
 
-	// 				assert.Equal(http.StatusNotModified, rec.Code)
-	// 				for _, i := range []string{
-	// 					headerContentEncoding,
-	// 					headerContentType,
-	// 				} {
-	// 					assert.Equal("", rec.Result().Header.Get(i))
-	// 				}
-	// 			}
-	// 		}()
-	// 		func() {
-	// 			var etag string
-	// 			{
-	// 				req := httptest.NewRequest(http.MethodGet, tc.Path, nil)
-	// 				for k, v := range tc.ReqHeaders {
-	// 					req.Header.Set(k, v)
-	// 				}
-	// 				req.RemoteAddr = tc.RemoteAddr
-	// 				req.Header.Set(headerAcceptEncoding, "gzip")
-	// 				rec := httptest.NewRecorder()
-	// 				server.ServeHTTP(rec, req)
+	t.Run("prevents disallowed methods", func(t *testing.T) {
+		t.Parallel()
 
-	// 				assert.Equal(tc.Status, rec.Code)
-	// 				for k, v := range tc.ResHeaders {
-	// 					assert.Equal(v, rec.Result().Header.Get(k))
-	// 				}
+		assert := require.New(t)
 
-	// 				if tc.Status != http.StatusOK {
-	// 					for _, i := range []string{
-	// 						headerCacheControl,
-	// 						headerContentEncoding,
-	// 						headerETag,
-	// 					} {
-	// 						assert.Equal("", rec.Result().Header.Get(i))
-	// 					}
-	// 					assert.Equal("text/plain; charset=utf-8", rec.Result().Header.Get(headerContentType))
-	// 					return
-	// 				}
-
-	// 				if !tc.Compressed {
-	// 					assert.Equal("", rec.Result().Header.Get(headerContentEncoding))
-	// 					assert.Equal(tc.Body, rec.Body.String())
-	// 					return
-	// 				}
-
-	// 				assert.Equal("gzip", rec.Result().Header.Get(headerContentEncoding))
-	// 				gr, err := gzip.NewReader(rec.Body)
-	// 				assert.NoError(err)
-	// 				var b bytes.Buffer
-	// 				_, err = io.Copy(&b, gr)
-	// 				assert.NoError(err)
-	// 				assert.Equal(tc.Body, b.String())
-
-	// 				etag = rec.Result().Header.Get(headerETag)
-	// 				assert.True(etag != "")
-	// 			}
-	// 			{
-	// 				req := httptest.NewRequest(http.MethodGet, tc.Path, nil)
-	// 				for k, v := range tc.ReqHeaders {
-	// 					req.Header.Set(k, v)
-	// 				}
-	// 				req.RemoteAddr = tc.RemoteAddr
-	// 				req.Header.Set(headerAcceptEncoding, "gzip")
-	// 				req.Header.Set(headerIfNoneMatch, etag)
-	// 				rec := httptest.NewRecorder()
-	// 				server.ServeHTTP(rec, req)
-
-	// 				assert.Equal(http.StatusNotModified, rec.Code)
-	// 				for _, i := range []string{
-	// 					headerContentEncoding,
-	// 					headerContentType,
-	// 				} {
-	// 					assert.Equal("", rec.Result().Header.Get(i))
-	// 				}
-	// 			}
-	// 		}()
-	// 		func() {
-	// 			var etag string
-	// 			{
-	// 				req := httptest.NewRequest(http.MethodGet, tc.Path, nil)
-	// 				for k, v := range tc.ReqHeaders {
-	// 					req.Header.Set(k, v)
-	// 				}
-	// 				req.RemoteAddr = tc.RemoteAddr
-	// 				req.Header.Set(headerAcceptEncoding, "deflate")
-	// 				rec := httptest.NewRecorder()
-	// 				server.ServeHTTP(rec, req)
-
-	// 				assert.Equal(tc.Status, rec.Code)
-	// 				for k, v := range tc.ResHeaders {
-	// 					assert.Equal(v, rec.Result().Header.Get(k))
-	// 				}
-
-	// 				if tc.Status != http.StatusOK {
-	// 					for _, i := range []string{
-	// 						headerCacheControl,
-	// 						headerContentEncoding,
-	// 						headerETag,
-	// 					} {
-	// 						assert.Equal("", rec.Result().Header.Get(i))
-	// 					}
-	// 					assert.Equal("text/plain; charset=utf-8", rec.Result().Header.Get(headerContentType))
-	// 					return
-	// 				}
-
-	// 				if !tc.Compressed {
-	// 					assert.Equal("", rec.Result().Header.Get(headerContentEncoding))
-	// 					assert.Equal(tc.Body, rec.Body.String())
-	// 					return
-	// 				}
-
-	// 				assert.Equal("", rec.Result().Header.Get(headerContentEncoding))
-	// 				assert.Equal(tc.Body, rec.Body.String())
-
-	// 				etag = rec.Result().Header.Get(headerETag)
-	// 				assert.True(etag != "")
-	// 			}
-	// 			{
-	// 				req := httptest.NewRequest(http.MethodGet, tc.Path, nil)
-	// 				for k, v := range tc.ReqHeaders {
-	// 					req.Header.Set(k, v)
-	// 				}
-	// 				req.RemoteAddr = tc.RemoteAddr
-	// 				req.Header.Set(headerAcceptEncoding, "deflate")
-	// 				req.Header.Set(headerIfNoneMatch, etag)
-	// 				rec := httptest.NewRecorder()
-	// 				server.ServeHTTP(rec, req)
-
-	// 				assert.Equal(http.StatusNotModified, rec.Code)
-	// 				for _, i := range []string{
-	// 					headerContentEncoding,
-	// 					headerContentType,
-	// 				} {
-	// 					assert.Equal("", rec.Result().Header.Get(i))
-	// 				}
-	// 			}
-	// 		}()
-	// 		assert.False(jdec.More())
-	// 	})
-	// }
-
-	// t.Run("prevents disallowed methods", func(t *testing.T) {
-	// 	t.Parallel()
-
-	// 	assert := require.New(t)
-
-	// 	var logb bytes.Buffer
-	// 	server := NewServer(klog.New(klog.OptHandler(klog.NewJSONSlogHandler(klog.NewSyncWriter(&logb)))), fsys, Config{
-	// 		Instance: "testinstance",
-	// 	})
-
-	// 	for _, i := range []string{
-	// 		http.MethodGet,
-	// 		http.MethodHead,
-	// 	} {
-	// 		req := httptest.NewRequest(i, "/", nil)
-	// 		rec := httptest.NewRecorder()
-	// 		server.ServeHTTP(rec, req)
-	// 		assert.Equal(http.StatusNotFound, rec.Code)
-	// 	}
-
-	// 	for _, i := range []string{
-	// 		http.MethodPost,
-	// 		http.MethodPut,
-	// 		http.MethodPatch,
-	// 		http.MethodDelete,
-	// 		http.MethodConnect,
-	// 		http.MethodOptions,
-	// 		http.MethodTrace,
-	// 	} {
-	// 		req := httptest.NewRequest(i, "/", nil)
-	// 		rec := httptest.NewRecorder()
-	// 		server.ServeHTTP(rec, req)
-	// 		assert.Equal(http.StatusMethodNotAllowed, rec.Code)
-	// 	}
-	// })
+		for _, i := range []string{
+			http.MethodPost,
+			http.MethodPut,
+			http.MethodPatch,
+			http.MethodDelete,
+			http.MethodConnect,
+			http.MethodOptions,
+			http.MethodTrace,
+		} {
+			req := httptest.NewRequest(i, "/", nil)
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			assert.Equal(http.StatusMethodNotAllowed, rec.Code)
+		}
+	})
 }
 
 func TestAddMimeTypes(t *testing.T) {
