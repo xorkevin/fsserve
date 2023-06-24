@@ -16,7 +16,8 @@ generate documentation for fsserve in several formats
 ### Options inherited from parent commands
 
 ```
-      --config string      config file (default is $XDG_CONFIG_HOME/.fsserve.json)
+  -b, --base string        static files base
+      --config string      config file (default is .fsserve.json)
       --log-level string   log level (default "info")
 ```
 

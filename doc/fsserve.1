@@ -1,5 +1,5 @@
 .nh
-.TH "fsserve" "1" "Apr 2023" "" ""
+.TH "fsserve" "1" "Jun 2023" "" ""
 
 .SH NAME
 .PP
@@ -18,8 +18,12 @@ A file system http server
 
 .SH OPTIONS
 .PP
+\fB-b\fP, \fB--base\fP=""
+	static files base
+
+.PP
 \fB--config\fP=""
-	config file (default is $XDG_CONFIG_HOME/.fsserve.json)
+	config file (default is .fsserve.json)
 
 .PP
 \fB-h\fP, \fB--help\fP[=false]
@@ -32,4 +36,4 @@ A file system http server
 
 .SH SEE ALSO
 .PP
-\fBfsserve-completion(1)\fP, \fBfsserve-doc(1)\fP, \fBfsserve-serve(1)\fP
+\fBfsserve-completion(1)\fP, \fBfsserve-doc(1)\fP, \fBfsserve-serve(1)\fP, \fBfsserve-tree(1)\fP

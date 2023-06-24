@@ -3,23 +3,27 @@
 
 .SH NAME
 .PP
-fsserve-doc-man - generate man page documentation for fsserve
+fsserve-tree-rm - Removes content and updates the content tree
 
 
 .SH SYNOPSIS
 .PP
-\fBfsserve doc man [flags]\fP
+\fBfsserve tree rm [flags]\fP
 
 
 .SH DESCRIPTION
 .PP
-generate man page documentation for fsserve
+Removes content and updates the content tree
 
 
 .SH OPTIONS
 .PP
+\fB-f\fP, \fB--file\fP=""
+	filepath
+
+.PP
 \fB-h\fP, \fB--help\fP[=false]
-	help for man
+	help for rm
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
@@ -35,11 +39,7 @@ generate man page documentation for fsserve
 \fB--log-level\fP="info"
 	log level
 
-.PP
-\fB-o\fP, \fB--output\fP="."
-	documentation output path
-
 
 .SH SEE ALSO
 .PP
-\fBfsserve-doc(1)\fP
+\fBfsserve-tree(1)\fP

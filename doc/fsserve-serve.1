@@ -1,5 +1,5 @@
 .nh
-.TH "fsserve" "1" "Apr 2023" "" ""
+.TH "fsserve" "1" "Jun 2023" "" ""
 
 .SH NAME
 .PP
@@ -18,22 +18,22 @@ Serves a local file system with an http server
 
 .SH OPTIONS
 .PP
-\fB-b\fP, \fB--base\fP=""
-	static files base
-
-.PP
 \fB-h\fP, \fB--help\fP[=false]
 	help for serve
 
 .PP
-\fB-p\fP, \fB--port\fP=8080
-	port to run the http server on
+\fB-p\fP, \fB--port\fP=0
+	port to run the http server on (default 8080)
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
 .PP
+\fB-b\fP, \fB--base\fP=""
+	static files base
+
+.PP
 \fB--config\fP=""
-	config file (default is $XDG_CONFIG_HOME/.fsserve.json)
+	config file (default is .fsserve.json)
 
 .PP
 \fB--log-level\fP="info"
