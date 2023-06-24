@@ -37,11 +37,17 @@ func TestServer(t *testing.T) {
 		"manifest.json":            `this is a test json file`,
 		"index.html":               `this is a test index html file`,
 	}
+	filesToRm := map[string]string{
+		"static/iwillbegone.txt": `I will be gone`,
+	}
 	srcGzipFiles := []string{
 		"static/testfile.js",
 		"static/test.html",
 		"manifest.json",
 		"index.html",
+	}
+	gzipFilesToRm := []string{
+		"static/iwillbegone.txt",
 	}
 	{
 		var filemode fs.FileMode = 0o644
@@ -51,8 +57,22 @@ func TestServer(t *testing.T) {
 			assert.NoError(os.MkdirAll(dir, 0o777))
 			assert.NoError(os.WriteFile(name, []byte(v), filemode))
 		}
+		for k, v := range filesToRm {
+			name := filepath.FromSlash(path.Join(srcDir, k))
+			dir := filepath.Dir(name)
+			assert.NoError(os.MkdirAll(dir, 0o777))
+			assert.NoError(os.WriteFile(name, []byte(v), filemode))
+		}
 		gw := gzip.NewWriter(nil)
 		for _, i := range srcGzipFiles {
+			var b bytes.Buffer
+			gw.Reset(&b)
+			_, err := gw.Write([]byte(srcFiles[i]))
+			assert.NoError(err)
+			assert.NoError(gw.Close())
+			assert.NoError(os.WriteFile(filepath.FromSlash(path.Join(srcDir, i)+".gz"), b.Bytes(), filemode))
+		}
+		for _, i := range gzipFilesToRm {
 			var b bytes.Buffer
 			gw.Reset(&b)
 			_, err := gw.Write([]byte(srcFiles[i]))
@@ -69,7 +89,11 @@ func TestServer(t *testing.T) {
 	assert.NoError(rwDB.Init())
 
 	contentDir := &kfstest.MapFS{
-		Fsys: fstest.MapFS{},
+		Fsys: fstest.MapFS{
+			"ishouldbegone": &fstest.MapFile{
+				Data: []byte("hello world"),
+			},
+		},
 	}
 	tree := NewTree(
 		klog.Discard{},
@@ -83,8 +107,11 @@ func TestServer(t *testing.T) {
 
 	assert.NoError(tree.Setup(context.Background()))
 
-	tree.Add(context.Background(), "static/testfile.js", "test/javascript", filepath.FromSlash(path.Join(srcDir, "static/testfile.js")), []EncodedFile{
+	tree.Add(context.Background(), "static/testfile.js", "", filepath.FromSlash(path.Join(srcDir, "static/testfile.js")), []EncodedFile{
 		{Code: "gzip", Name: filepath.FromSlash(path.Join(srcDir, "static/testfile.js.gz"))},
+	})
+	tree.Add(context.Background(), "static/iwillbegone.txt", "", filepath.FromSlash(path.Join(srcDir, "static/iwillbegone.txt")), []EncodedFile{
+		{Code: "gzip", Name: filepath.FromSlash(path.Join(srcDir, "static/iwillbegone.txt.gz"))},
 	})
 
 	rdb := db.NewSQLClient(klog.Discard{}, "file:"+filepath.FromSlash(treeDBFile)+"?mode=ro")
@@ -187,7 +214,7 @@ func TestServer(t *testing.T) {
 				},
 			},
 		},
-	}, false))
+	}, true))
 	assert.Equal(len(srcFiles)+len(srcGzipFiles), len(contentDir.Fsys))
 
 	for _, tc := range []struct {
