@@ -70,6 +70,15 @@ func (c *Cmd) getTreeCmd() *cobra.Command {
 	syncCmd.PersistentFlags().BoolVar(&c.treeFlags.rmAfter, "rm-after", false, "removes unpresent content")
 	treeCmd.AddCommand(syncCmd)
 
+	gcCmd := &cobra.Command{
+		Use:               "gc",
+		Short:             "GCs the content dir",
+		Long:              `GCs the content dir`,
+		Run:               c.execTreeGC,
+		DisableAutoGenTag: true,
+	}
+	treeCmd.AddCommand(gcCmd)
+
 	return treeCmd
 }
 
@@ -137,6 +146,19 @@ func (c *Cmd) execTreeSync(cmd *cobra.Command, args []string) {
 	}
 	tree := serve.NewTree(c.log.Logger, treedb, contentDir)
 	if err := tree.SyncContent(context.Background(), cfg, c.treeFlags.rmAfter); err != nil {
+		c.logFatal(err)
+		return
+	}
+}
+
+func (c *Cmd) execTreeGC(cmd *cobra.Command, args []string) {
+	contentDir, treedb, err := c.getTree("ro")
+	if err != nil {
+		c.logFatal(err)
+		return
+	}
+	tree := serve.NewTree(c.log.Logger, treedb, contentDir)
+	if err := tree.GCContentDir(context.Background()); err != nil {
 		c.logFatal(err)
 		return
 	}
