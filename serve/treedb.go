@@ -94,26 +94,26 @@ func (t *SQLiteTreeDB) Iterate(ctx context.Context, f TreeIterator) error {
 		if len(m) == 0 {
 			return nil
 		}
-		fhashes := make([]string, 0, len(m))
+		names := make([]string, 0, len(m))
 		for _, i := range m {
-			fhashes = append(fhashes, i.Hash)
+			names = append(names, i.Name)
 		}
-		enc, err := t.repo.ListEncoded(ctx, fhashes)
+		enc, err := t.repo.ListEncoded(ctx, names)
 		if err != nil {
 			return kerrors.WithMsg(err, "Failed to list db encoded content configs")
 		}
 		sort.Slice(enc, func(i, j int) bool {
-			if enc[i].FHash < enc[j].FHash {
+			if enc[i].Name < enc[j].Name {
 				return true
 			}
-			if enc[i].FHash > enc[j].FHash {
+			if enc[i].Name > enc[j].Name {
 				return false
 			}
 			return enc[i].Order < enc[j].Order
 		})
 		encMap := map[string][]EncodedContent{}
 		for _, i := range enc {
-			encMap[i.FHash] = append(encMap[i.FHash], EncodedContent{
+			encMap[i.Name] = append(encMap[i.Name], EncodedContent{
 				Code: i.Code,
 				Hash: i.Hash,
 			})
@@ -122,7 +122,7 @@ func (t *SQLiteTreeDB) Iterate(ctx context.Context, f TreeIterator) error {
 			if err := f(ctx, i.Name, ContentConfig{
 				Hash:        i.Hash,
 				ContentType: i.ContentType,
-				Encoded:     encMap[i.Hash],
+				Encoded:     encMap[i.Name],
 			}); err != nil {
 				return kerrors.WithMsg(err, fmt.Sprintf("Failed executing iterator for %s", i.Name))
 			}
@@ -143,7 +143,7 @@ func (t *SQLiteTreeDB) Add(ctx context.Context, dst string, cfg ContentConfig) e
 	enc := make([]*treedbmodel.Encoded, 0, len(cfg.Encoded))
 	for n, i := range cfg.Encoded {
 		enc = append(enc, &treedbmodel.Encoded{
-			FHash: m.Hash,
+			Name:  m.Name,
 			Code:  i.Code,
 			Order: n + 1,
 			Hash:  i.Hash,

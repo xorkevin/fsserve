@@ -15,7 +15,7 @@ type (
 		New(name, hash, contenttype string) *Model
 		Exists(ctx context.Context, name string) (*Model, error)
 		List(ctx context.Context, limit int, after string) ([]Model, error)
-		ListEncoded(ctx context.Context, fhashes []string) ([]Encoded, error)
+		ListEncoded(ctx context.Context, names []string) ([]Encoded, error)
 		Get(ctx context.Context, name string) (*Model, []Encoded, error)
 		Insert(ctx context.Context, m *Model, enc []*Encoded) error
 		Update(ctx context.Context, m *Model, enc []*Encoded) error
@@ -48,10 +48,10 @@ type (
 	//forge:model enc
 	//forge:model:query enc
 	Encoded struct {
-		FHash string `model:"fhash,VARCHAR(2047)" query:"fhash;deleq,fhash;getgroupeq,fhash|in"`
+		Name  string `model:"name,VARCHAR(4095)" query:"name;deleq,name;getgroupeq,name|in"`
 		Code  string `model:"code,VARCHAR(255)" query:"code"`
-		Order int    `model:"ord,INT NOT NULL" query:"ord;getgroupeq,fhash"`
-		Hash  string `model:"hash,VARCHAR(2047) NOT NULL, PRIMARY KEY (fhash, code), UNIQUE (fhash, ord)" query:"hash"`
+		Order int    `model:"ord,INT NOT NULL" query:"ord;getgroupeq,name"`
+		Hash  string `model:"hash,VARCHAR(2047) NOT NULL, PRIMARY KEY (name, code), UNIQUE (name, ord)" query:"hash"`
 	}
 )
 
@@ -98,12 +98,12 @@ func (r *repo) List(ctx context.Context, limit int, after string) ([]Model, erro
 	return m, nil
 }
 
-func (r *repo) ListEncoded(ctx context.Context, fhashes []string) ([]Encoded, error) {
-	if len(fhashes) == 0 {
+func (r *repo) ListEncoded(ctx context.Context, names []string) ([]Encoded, error) {
+	if len(names) == 0 {
 		return nil, nil
 	}
 
-	m, err := r.encTable.GetEncodedHasFHashOrdFHash(ctx, r.db, fhashes, true, 128*len(fhashes), 0)
+	m, err := r.encTable.GetEncodedHasNameOrdName(ctx, r.db, names, true, 128*len(names), 0)
 	if err != nil {
 		return nil, kerrors.WithMsg(err, "Failed to get encoded content configs")
 	}
@@ -115,7 +115,7 @@ func (r *repo) Get(ctx context.Context, name string) (*Model, []Encoded, error) 
 	if err != nil {
 		return nil, nil, kerrors.WithMsg(err, "Failed to get content config")
 	}
-	enc, err := r.encTable.GetEncodedEqFHashOrdOrder(ctx, r.db, m.Hash, true, 128, 0)
+	enc, err := r.encTable.GetEncodedEqNameOrdOrder(ctx, r.db, m.Name, true, 128, 0)
 	if err != nil {
 		return nil, nil, kerrors.WithMsg(err, "Failed to get encoded content configs")
 	}
@@ -123,14 +123,14 @@ func (r *repo) Get(ctx context.Context, name string) (*Model, []Encoded, error) 
 }
 
 func (r *repo) addEncoded(ctx context.Context, m *Model, enc []*Encoded) error {
-	if err := r.encTable.DelEqFHash(ctx, r.db, m.Hash); err != nil {
+	if err := r.encTable.DelEqName(ctx, r.db, m.Name); err != nil {
 		return kerrors.WithMsg(err, "Failed to delete encoded content configs")
 	}
 	if len(enc) == 0 {
 		return nil
 	}
 	for n, i := range enc {
-		i.FHash = m.Hash
+		i.Name = m.Name
 		i.Order = n + 1
 	}
 	if err := r.encTable.InsertBulk(ctx, r.db, enc, true); err != nil {
@@ -167,7 +167,7 @@ func (r *repo) Delete(ctx context.Context, name string) error {
 	if err != nil {
 		return kerrors.WithMsg(err, "Failed to get content config")
 	}
-	if err := r.encTable.DelEqFHash(ctx, r.db, m.Hash); err != nil {
+	if err := r.encTable.DelEqName(ctx, r.db, m.Name); err != nil {
 		return kerrors.WithMsg(err, "Failed to delete encoded content configs")
 	}
 	if err := r.ctTable.DelEqName(ctx, r.db, name); err != nil {
