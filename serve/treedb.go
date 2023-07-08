@@ -2,24 +2,20 @@ package serve
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
-	"path"
 	"sort"
 
 	"xorkevin.dev/forge/model/sqldb"
 	"xorkevin.dev/fsserve/db"
 	"xorkevin.dev/fsserve/serve/treedbmodel"
 	"xorkevin.dev/kerrors"
-	"xorkevin.dev/kfs"
 )
 
 type (
 	TreeDB interface {
-		Iterate(ctx context.Context, f TreeIterator) error
 		Get(ctx context.Context, name string) (*ContentConfig, error)
+		Iterate(ctx context.Context, f TreeIterator) error
 		Add(ctx context.Context, dst string, cfg ContentConfig) error
 		Rm(ctx context.Context, dst string) error
 		Setup(ctx context.Context) error
@@ -51,90 +47,6 @@ func (e errNotFound) Error() string {
 }
 
 type (
-	FSTreeDB struct {
-		fsys fs.FS
-	}
-)
-
-func NewFSTreeDB(fsys fs.FS) *FSTreeDB {
-	return &FSTreeDB{
-		fsys: fsys,
-	}
-}
-
-func (t *FSTreeDB) Iterate(ctx context.Context, f TreeIterator) error {
-	info, err := fs.Stat(t.fsys, ".")
-	if err != nil {
-		return kerrors.WithMsg(err, "Failed to read root dir for treedb")
-	}
-	return t.iterateDir(ctx, f, ".", fs.FileInfoToDirEntry(info))
-}
-
-func (t *FSTreeDB) iterateDir(ctx context.Context, f TreeIterator, p string, entry fs.DirEntry) error {
-	if !entry.IsDir() {
-		b, err := fs.ReadFile(t.fsys, p)
-		if err != nil {
-			return kerrors.WithMsg(err, fmt.Sprintf("Failed to get content config for %s", p))
-		}
-		var cfg ContentConfig
-		if err := json.Unmarshal(b, &cfg); err != nil {
-			return kerrors.WithMsg(err, fmt.Sprintf("Failed to parse content config for %s", p))
-		}
-		if err := f(ctx, p, cfg); err != nil {
-			return kerrors.WithMsg(err, fmt.Sprintf("Failed executing iterator for %s", p))
-		}
-		return nil
-	}
-	entries, err := fs.ReadDir(t.fsys, p)
-	if err != nil {
-		return kerrors.WithMsg(err, fmt.Sprintf("Failed reading dir: %s", p))
-	}
-	for _, i := range entries {
-		if err := t.iterateDir(ctx, f, path.Join(p, i.Name()), i); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (t *FSTreeDB) Get(ctx context.Context, name string) (*ContentConfig, error) {
-	b, err := fs.ReadFile(t.fsys, name)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, kerrors.WithKind(err, ErrNotFound, "Content config not found")
-		}
-		return nil, kerrors.WithMsg(err, "Failed to get content config")
-	}
-	cfg := &ContentConfig{}
-	if err := json.Unmarshal(b, cfg); err != nil {
-		return nil, kerrors.WithMsg(err, "Failed to parse content config")
-	}
-	return cfg, nil
-}
-
-func (t *FSTreeDB) Add(ctx context.Context, dst string, cfg ContentConfig) error {
-	b, err := json.Marshal(cfg)
-	if err != nil {
-		return kerrors.WithMsg(err, "Failed to marshal content config to json")
-	}
-	if err := kfs.WriteFile(t.fsys, dst, b, 0o644); err != nil {
-		return kerrors.WithMsg(err, "Failed to write content config")
-	}
-	return nil
-}
-
-func (t *FSTreeDB) Rm(ctx context.Context, dst string) error {
-	if err := kfs.RemoveAll(t.fsys, dst); err != nil {
-		return kerrors.WithMsg(err, "Failed to remove content config")
-	}
-	return nil
-}
-
-func (t *FSTreeDB) Setup(ctx context.Context) error {
-	return nil
-}
-
-type (
 	SQLiteTreeDB struct {
 		repo treedbmodel.Repo
 	}
@@ -144,6 +56,28 @@ func NewSQLiteTreeDB(d sqldb.Executor, contentTable, encTable string) *SQLiteTre
 	return &SQLiteTreeDB{
 		repo: treedbmodel.New(d, contentTable, encTable),
 	}
+}
+
+func (t *SQLiteTreeDB) Get(ctx context.Context, name string) (*ContentConfig, error) {
+	m, enc, err := t.repo.Get(ctx, name)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return nil, kerrors.WithKind(err, ErrNotFound, "Content config not found")
+		}
+		return nil, kerrors.WithMsg(err, "Failed to get content config")
+	}
+	res := make([]EncodedContent, 0, len(enc))
+	for _, i := range enc {
+		res = append(res, EncodedContent{
+			Code: i.Code,
+			Hash: i.Hash,
+		})
+	}
+	return &ContentConfig{
+		Hash:        m.Hash,
+		ContentType: m.ContentType,
+		Encoded:     res,
+	}, nil
 }
 
 const (
@@ -198,28 +132,6 @@ func (t *SQLiteTreeDB) Iterate(ctx context.Context, f TreeIterator) error {
 		}
 		cursor = m[len(m)-1].Name
 	}
-}
-
-func (t *SQLiteTreeDB) Get(ctx context.Context, name string) (*ContentConfig, error) {
-	m, enc, err := t.repo.Get(ctx, name)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return nil, kerrors.WithKind(err, ErrNotFound, "Content config not found")
-		}
-		return nil, kerrors.WithMsg(err, "Failed to get content config")
-	}
-	res := make([]EncodedContent, 0, len(enc))
-	for _, i := range enc {
-		res = append(res, EncodedContent{
-			Code: i.Code,
-			Hash: i.Hash,
-		})
-	}
-	return &ContentConfig{
-		Hash:        m.Hash,
-		ContentType: m.ContentType,
-		Encoded:     res,
-	}, nil
 }
 
 func (t *SQLiteTreeDB) Add(ctx context.Context, dst string, cfg ContentConfig) error {

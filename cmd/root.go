@@ -58,8 +58,7 @@ func (c *Cmd) Execute() {
 	viper.SetDefault("port", 8080)
 	viper.SetDefault("base", "")
 	viper.SetDefault("contentdir", "content")
-	viper.SetDefault("treedbengine", "fs")
-	viper.SetDefault("treedb", "tree")
+	viper.SetDefault("treedb", "tree.db")
 	viper.SetDefault("sync", serve.SyncConfig{})
 	viper.SetDefault("exttotype", []serve.MimeType{})
 	viper.SetDefault("routes", []serve.Route{})
@@ -107,52 +106,30 @@ func (c *Cmd) getContentFS(rootDir fs.FS, base string) (fs.FS, error) {
 }
 
 func (c *Cmd) getTreeDB(rootDir fs.FS, base string, mode string) (serve.TreeDB, error) {
-	switch viper.GetString("treedbengine") {
-	case "sqlite":
-		{
-			// url must be in the form of
-			// file:rel/path/to/file.db?optquery=value&otheroptquery=value
-			u, err := url.Parse(viper.GetString("treedb"))
-			if err != nil {
-				return nil, kerrors.WithMsg(err, "Invalid tree db sqlite dsn")
-			}
-			if u.Opaque == "" {
-				return nil, kerrors.WithMsg(err, "Tree db sqlite dsn must be relative")
-			}
-			u.Opaque = path.Join(base, u.Opaque)
-			q := u.Query()
-			q.Set("mode", mode)
-			u.RawQuery = q.Encode()
-			d := db.NewSQLClient(c.log.Logger.Sublogger("db"), u.String())
-			if err := d.Init(); err != nil {
-				return nil, kerrors.WithMsg(err, "Failed to init sqlite db client")
-			}
-
-			c.log.Info(context.Background(), "Using treedbengine",
-				klog.AString("db.engine", "sqlite"),
-				klog.AString("db.file", u.Opaque),
-			)
-
-			return serve.NewSQLiteTreeDB(d, "content", "encoded"), nil
-		}
-	case "fs", "":
-		{
-			treedir := viper.GetString("treedb")
-			treeDir, err := fs.Sub(rootDir, treedir)
-			if err != nil {
-				return nil, kerrors.WithMsg(err, "Invalid tree dir")
-			}
-
-			c.log.Info(context.Background(), "Using treedbengine",
-				klog.AString("db.engine", "fs"),
-				klog.AString("db.dir", treedir),
-			)
-
-			return serve.NewFSTreeDB(treeDir), nil
-		}
-	default:
-		return nil, kerrors.WithMsg(nil, "Invalid db engine")
+	// url must be in the form of
+	// file:rel/path/to/file.db?optquery=value&otheroptquery=value
+	u, err := url.Parse(viper.GetString("treedb"))
+	if err != nil {
+		return nil, kerrors.WithMsg(err, "Invalid tree db sqlite dsn")
 	}
+	if u.Opaque == "" {
+		return nil, kerrors.WithMsg(err, "Tree db sqlite dsn must be relative")
+	}
+	u.Opaque = path.Join(base, u.Opaque)
+	q := u.Query()
+	q.Set("mode", mode)
+	u.RawQuery = q.Encode()
+	d := db.NewSQLClient(c.log.Logger.Sublogger("db"), u.String())
+	if err := d.Init(); err != nil {
+		return nil, kerrors.WithMsg(err, "Failed to init sqlite db client")
+	}
+
+	c.log.Info(context.Background(), "Using treedb",
+		klog.AString("db.engine", "sqlite"),
+		klog.AString("db.file", u.Opaque),
+	)
+
+	return serve.NewSQLiteTreeDB(d, "content", "encoded"), nil
 }
 
 func (c *Cmd) getTree(mode string) (fs.FS, serve.TreeDB, error) {

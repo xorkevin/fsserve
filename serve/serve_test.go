@@ -17,7 +17,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"xorkevin.dev/fsserve/db"
-	"xorkevin.dev/kfs"
 	"xorkevin.dev/kfs/kfstest"
 	"xorkevin.dev/klog"
 )
@@ -110,15 +109,6 @@ func TestServer(t *testing.T) {
 				rdb,
 				"content",
 				"encoded",
-			),
-		},
-		{
-			Name: "fs dir",
-			RWDB: NewFSTreeDB(
-				kfs.DirFS(treeDBDir),
-			),
-			RDB: NewFSTreeDB(
-				kfs.NewReadOnlyFS(kfs.DirFS(treeDBDir)),
 			),
 		},
 	} {
