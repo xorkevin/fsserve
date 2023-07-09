@@ -3,39 +3,27 @@
 
 .SH NAME
 .PP
-fsserve-tree-add - Adds content and updates the content tree
+fsserve-tree-gc - GCs the content dir
 
 
 .SH SYNOPSIS
 .PP
-\fBfsserve tree add [flags]\fP
+\fBfsserve tree gc [flags]\fP
 
 
 .SH DESCRIPTION
 .PP
-Adds content and updates the content tree
+GCs the content dir
 
 
 .SH OPTIONS
 .PP
-\fB--contenttype\fP=""
-	content type of src
-
-.PP
-\fB-e\fP, \fB--enc\fP=[]
-	encoded versions of the file in the form of (code:filename)
-
-.PP
-\fB-f\fP, \fB--file\fP=""
-	destination filepath
+\fB--full\fP[=false]
+	perform full gc
 
 .PP
 \fB-h\fP, \fB--help\fP[=false]
-	help for add
-
-.PP
-\fB-s\fP, \fB--src\fP=""
-	file to add
+	help for gc
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

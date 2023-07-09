@@ -1,20 +1,20 @@
-## fsserve tree sync
+## fsserve tree gc
 
-Syncs the content tree db
+GCs the content dir
 
 ### Synopsis
 
-Syncs the content tree db
+GCs the content dir
 
 ```
-fsserve tree sync [flags]
+fsserve tree gc [flags]
 ```
 
 ### Options
 
 ```
-  -h, --help       help for sync
-      --rm-after   removes unsynced content
+      --full   perform full gc
+  -h, --help   help for gc
 ```
 
 ### Options inherited from parent commands
