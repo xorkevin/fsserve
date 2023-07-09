@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 
 	"xorkevin.dev/forge/model/sqldb"
 	"xorkevin.dev/fsserve/db"
@@ -14,14 +13,18 @@ import (
 
 type (
 	TreeDB interface {
+		Exists(ctx context.Context, name string) (bool, error)
+		ContentExists(ctx context.Context, hash string) (bool, error)
 		Get(ctx context.Context, name string) (*ContentConfig, error)
 		Iterate(ctx context.Context, f TreeIterator) error
 		Add(ctx context.Context, dst string, cfg ContentConfig) error
 		Rm(ctx context.Context, dst string) error
+		IterateGC(ctx context.Context, f ContentIterator) error
 		Setup(ctx context.Context) error
 	}
 
-	TreeIterator = func(ctx context.Context, name string, cfg ContentConfig) error
+	TreeIterator    = func(ctx context.Context, name string) error
+	ContentIterator = func(ctx context.Context, hash string) error
 
 	ContentConfig struct {
 		Hash        string           `json:"hash"`
@@ -52,10 +55,26 @@ type (
 	}
 )
 
-func NewSQLiteTreeDB(d sqldb.Executor, contentTable, encTable string) *SQLiteTreeDB {
+func NewSQLiteTreeDB(d sqldb.Executor, contentTable, encTable, gcTable string) *SQLiteTreeDB {
 	return &SQLiteTreeDB{
-		repo: treedbmodel.New(d, contentTable, encTable),
+		repo: treedbmodel.New(d, contentTable, encTable, gcTable),
 	}
+}
+
+func (t *SQLiteTreeDB) Exists(ctx context.Context, name string) (bool, error) {
+	exists, err := t.repo.Exists(ctx, name)
+	if err != nil {
+		return false, kerrors.WithMsg(err, "Failed checking content config")
+	}
+	return exists, nil
+}
+
+func (t *SQLiteTreeDB) ContentExists(ctx context.Context, hash string) (bool, error) {
+	exists, err := t.repo.ContentExists(ctx, hash)
+	if err != nil {
+		return false, kerrors.WithMsg(err, "Failed checking content")
+	}
+	return exists, nil
 }
 
 func (t *SQLiteTreeDB) Get(ctx context.Context, name string) (*ContentConfig, error) {
@@ -94,36 +113,8 @@ func (t *SQLiteTreeDB) Iterate(ctx context.Context, f TreeIterator) error {
 		if len(m) == 0 {
 			return nil
 		}
-		names := make([]string, 0, len(m))
 		for _, i := range m {
-			names = append(names, i.Name)
-		}
-		enc, err := t.repo.ListEncoded(ctx, names)
-		if err != nil {
-			return kerrors.WithMsg(err, "Failed to list db encoded content configs")
-		}
-		sort.Slice(enc, func(i, j int) bool {
-			if enc[i].Name < enc[j].Name {
-				return true
-			}
-			if enc[i].Name > enc[j].Name {
-				return false
-			}
-			return enc[i].Order < enc[j].Order
-		})
-		encMap := map[string][]EncodedContent{}
-		for _, i := range enc {
-			encMap[i.Name] = append(encMap[i.Name], EncodedContent{
-				Code: i.Code,
-				Hash: i.Hash,
-			})
-		}
-		for _, i := range m {
-			if err := f(ctx, i.Name, ContentConfig{
-				Hash:        i.Hash,
-				ContentType: i.ContentType,
-				Encoded:     encMap[i.Name],
-			}); err != nil {
+			if err := f(ctx, i.Name); err != nil {
 				return kerrors.WithMsg(err, fmt.Sprintf("Failed executing iterator for %s", i.Name))
 			}
 		}
@@ -150,16 +141,17 @@ func (t *SQLiteTreeDB) Add(ctx context.Context, dst string, cfg ContentConfig) e
 		})
 	}
 
-	if _, err := t.repo.Exists(ctx, dst); err != nil {
-		if !errors.Is(err, db.ErrNotFound) {
-			return kerrors.WithMsg(err, "Failed checking dst file")
-		}
-		if err := t.repo.Insert(ctx, &m, enc); err != nil {
-			return kerrors.WithMsg(err, "Failed to insert content config")
-		}
-	} else {
+	exists, err := t.repo.Exists(ctx, dst)
+	if err != nil {
+		return kerrors.WithMsg(err, "Failed checking dst file")
+	}
+	if exists {
 		if err := t.repo.Update(ctx, &m, enc); err != nil {
 			return kerrors.WithMsg(err, "Failed to update content config")
+		}
+	} else {
+		if err := t.repo.Insert(ctx, &m, enc); err != nil {
+			return kerrors.WithMsg(err, "Failed to insert content config")
 		}
 	}
 
@@ -167,16 +159,46 @@ func (t *SQLiteTreeDB) Add(ctx context.Context, dst string, cfg ContentConfig) e
 }
 
 func (t *SQLiteTreeDB) Rm(ctx context.Context, dst string) error {
-	if _, err := t.repo.Exists(ctx, dst); err != nil {
-		if !errors.Is(err, db.ErrNotFound) {
-			return kerrors.WithMsg(err, "Failed checking dst file")
-		}
+	exists, err := t.repo.Exists(ctx, dst)
+	if err != nil {
+		return kerrors.WithMsg(err, "Failed checking dst file")
+	}
+	if !exists {
 		return nil
 	}
 	if err := t.repo.Delete(ctx, dst); err != nil {
 		return kerrors.WithMsg(err, "Failed to delete content config")
 	}
 	return nil
+}
+
+func (t *SQLiteTreeDB) IterateGC(ctx context.Context, f ContentIterator) error {
+	for {
+		m, err := t.repo.ListGCCandidates(ctx, sqliteTreeConfigBatchSize)
+		if err != nil {
+			return kerrors.WithMsg(err, "Failed to list gc candidates")
+		}
+		if len(m) == 0 {
+			return nil
+		}
+		for _, i := range m {
+			exists, err := t.repo.ContentExists(ctx, i.Hash)
+			if err != nil {
+				return kerrors.WithMsg(err, fmt.Sprintf("Failed checking content exists: %s", i.Hash))
+			}
+			if !exists {
+				if err := f(ctx, i.Hash); err != nil {
+					return kerrors.WithMsg(err, fmt.Sprintf("Failed executing iterator for %s", i.Hash))
+				}
+			}
+			if err := t.repo.DequeueGCCandidate(ctx, i.Hash); err != nil {
+				return kerrors.WithMsg(err, fmt.Sprintf("Failed dequeueing gc candidate: %s", i.Hash))
+			}
+		}
+		if len(m) < sqliteTreeConfigBatchSize {
+			return nil
+		}
+	}
 }
 
 func (t *SQLiteTreeDB) Setup(ctx context.Context) error {

@@ -144,6 +144,10 @@ func (t *encModelTable) Setup(ctx context.Context, d sqldb.Executor) error {
 	if err != nil {
 		return err
 	}
+	_, err = d.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS "+t.TableName+"_hash_index ON "+t.TableName+" (hash);")
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -179,47 +183,6 @@ func (t *encModelTable) DelEqName(ctx context.Context, d sqldb.Executor, name st
 	return err
 }
 
-func (t *encModelTable) GetEncodedHasNameOrdName(ctx context.Context, d sqldb.Executor, names []string, orderasc bool, limit, offset int) (_ []Encoded, retErr error) {
-	paramCount := 2
-	args := make([]interface{}, 0, paramCount+len(names))
-	args = append(args, limit, offset)
-	var placeholdersnames string
-	{
-		placeholders := make([]string, 0, len(names))
-		for _, i := range names {
-			paramCount++
-			placeholders = append(placeholders, fmt.Sprintf("($%d)", paramCount))
-			args = append(args, i)
-		}
-		placeholdersnames = strings.Join(placeholders, ", ")
-	}
-	order := "DESC"
-	if orderasc {
-		order = "ASC"
-	}
-	res := make([]Encoded, 0, limit)
-	rows, err := d.QueryContext(ctx, "SELECT name, code, ord, hash FROM "+t.TableName+" WHERE name IN (VALUES "+placeholdersnames+") ORDER BY name "+order+" LIMIT $1 OFFSET $2;", args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err := rows.Close(); err != nil {
-			retErr = errors.Join(retErr, fmt.Errorf("Failed to close db rows: %w", err))
-		}
-	}()
-	for rows.Next() {
-		var m Encoded
-		if err := rows.Scan(&m.Name, &m.Code, &m.Order, &m.Hash); err != nil {
-			return nil, err
-		}
-		res = append(res, m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return res, nil
-}
-
 func (t *encModelTable) GetEncodedEqNameOrdOrder(ctx context.Context, d sqldb.Executor, name string, orderasc bool, limit, offset int) (_ []Encoded, retErr error) {
 	order := "DESC"
 	if orderasc {
@@ -246,4 +209,78 @@ func (t *encModelTable) GetEncodedEqNameOrdOrder(ctx context.Context, d sqldb.Ex
 		return nil, err
 	}
 	return res, nil
+}
+
+type (
+	gcModelTable struct {
+		TableName string
+	}
+)
+
+func (t *gcModelTable) Setup(ctx context.Context, d sqldb.Executor) error {
+	_, err := d.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS "+t.TableName+" (hash VARCHAR(2047) PRIMARY KEY);")
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *gcModelTable) Insert(ctx context.Context, d sqldb.Executor, m *GCCandiate) error {
+	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (hash) VALUES ($1);", m.Hash)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *gcModelTable) InsertBulk(ctx context.Context, d sqldb.Executor, models []*GCCandiate, allowConflict bool) error {
+	conflictSQL := ""
+	if allowConflict {
+		conflictSQL = " ON CONFLICT DO NOTHING"
+	}
+	placeholders := make([]string, 0, len(models))
+	args := make([]interface{}, 0, len(models)*1)
+	for c, m := range models {
+		n := c * 1
+		placeholders = append(placeholders, fmt.Sprintf("($%d)", n+1))
+		args = append(args, m.Hash)
+	}
+	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (hash) VALUES "+strings.Join(placeholders, ", ")+conflictSQL+";", args...)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *gcModelTable) GetGCCandiateOrdHash(ctx context.Context, d sqldb.Executor, orderasc bool, limit, offset int) (_ []GCCandiate, retErr error) {
+	order := "DESC"
+	if orderasc {
+		order = "ASC"
+	}
+	res := make([]GCCandiate, 0, limit)
+	rows, err := d.QueryContext(ctx, "SELECT hash FROM "+t.TableName+" ORDER BY hash "+order+" LIMIT $1 OFFSET $2;", limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("Failed to close db rows: %w", err))
+		}
+	}()
+	for rows.Next() {
+		var m GCCandiate
+		if err := rows.Scan(&m.Hash); err != nil {
+			return nil, err
+		}
+		res = append(res, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+func (t *gcModelTable) DelEqHash(ctx context.Context, d sqldb.Executor, hash string) error {
+	_, err := d.ExecContext(ctx, "DELETE FROM "+t.TableName+" WHERE hash = $1;", hash)
+	return err
 }

@@ -17,6 +17,7 @@ type (
 		enc     []string
 		dst     string
 		rmAfter bool
+		full    bool
 	}
 )
 
@@ -67,7 +68,7 @@ func (c *Cmd) getTreeCmd() *cobra.Command {
 		Run:               c.execTreeSync,
 		DisableAutoGenTag: true,
 	}
-	syncCmd.PersistentFlags().BoolVar(&c.treeFlags.rmAfter, "rm-after", false, "removes unpresent content")
+	syncCmd.PersistentFlags().BoolVar(&c.treeFlags.rmAfter, "rm-after", false, "removes unsynced content")
 	treeCmd.AddCommand(syncCmd)
 
 	gcCmd := &cobra.Command{
@@ -77,6 +78,7 @@ func (c *Cmd) getTreeCmd() *cobra.Command {
 		Run:               c.execTreeGC,
 		DisableAutoGenTag: true,
 	}
+	gcCmd.PersistentFlags().BoolVar(&c.treeFlags.full, "full", false, "perform full gc")
 	treeCmd.AddCommand(gcCmd)
 
 	return treeCmd
@@ -158,7 +160,7 @@ func (c *Cmd) execTreeGC(cmd *cobra.Command, args []string) {
 		return
 	}
 	tree := serve.NewTree(c.log.Logger, treedb, contentDir)
-	if err := tree.GCContentDir(context.Background()); err != nil {
+	if err := tree.GCContentDir(context.Background(), c.treeFlags.full); err != nil {
 		c.logFatal(err)
 		return
 	}

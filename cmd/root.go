@@ -129,7 +129,7 @@ func (c *Cmd) getTreeDB(rootDir fs.FS, base string, mode string) (serve.TreeDB, 
 		klog.AString("db.file", u.Opaque),
 	)
 
-	return serve.NewSQLiteTreeDB(d, "content", "encoded"), nil
+	return serve.NewSQLiteTreeDB(d, "content", "encoded", "content_gc"), nil
 }
 
 func (c *Cmd) getTree(mode string) (fs.FS, serve.TreeDB, error) {

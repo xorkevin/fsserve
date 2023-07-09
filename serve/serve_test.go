@@ -104,11 +104,13 @@ func TestServer(t *testing.T) {
 				rwDB,
 				"content",
 				"encoded",
+				"content_gc",
 			),
 			RDB: NewSQLiteTreeDB(
 				rdb,
 				"content",
 				"encoded",
+				"content_gc",
 			),
 		},
 	} {
@@ -238,7 +240,13 @@ func TestServer(t *testing.T) {
 					},
 				},
 			}, true))
+			_, ok := contentDir.Fsys["ishouldbegone"]
+			assert.True(ok)
+			assert.Equal(len(srcFiles)+len(srcGzipFiles)+1, len(contentDir.Fsys))
+			assert.NoError(tree.GCContentDir(context.Background(), true))
 			assert.Equal(len(srcFiles)+len(srcGzipFiles), len(contentDir.Fsys))
+			_, ok = contentDir.Fsys["ishouldbegone"]
+			assert.False(ok)
 
 			for _, tc := range []struct {
 				Name       string

@@ -79,7 +79,7 @@ func (t *Tree) SyncContent(ctx context.Context, cfg SyncConfig, rmAfter bool) er
 					Name: j.Name,
 				})
 			}
-			if err := t.Add(ctx, dst, i.ContentType, i.Src, enc); err != nil {
+			if err := t.addContent(ctx, dst, i.ContentType, i.Src, enc); err != nil {
 				return err
 			}
 			dstSet[dst] = struct{}{}
@@ -100,21 +100,19 @@ func (t *Tree) SyncContent(ctx context.Context, cfg SyncConfig, rmAfter bool) er
 	}
 
 	if rmAfter {
-		contentSet := map[string]struct{}{}
-		if err := t.db.Iterate(ctx, func(ctx context.Context, name string, cfg ContentConfig) error {
+		if err := t.db.Iterate(ctx, func(ctx context.Context, name string) error {
 			if _, ok := dstSet[name]; ok {
-				contentSet[cfg.Hash] = struct{}{}
-				for _, i := range cfg.Encoded {
-					contentSet[i.Hash] = struct{}{}
-				}
 				return nil
 			}
-			return t.rmContent(ctx, name, cfg)
+			if err := t.rmContent(ctx, name); err != nil {
+				return err
+			}
+			return nil
 		}); err != nil {
 			return kerrors.WithMsg(err, "Failed iterating through tree db")
 		}
 
-		if err := t.rmSetDifference(contentSet); err != nil {
+		if err := t.iterateGC(ctx); err != nil {
 			return err
 		}
 	}
@@ -211,6 +209,16 @@ func (t *Tree) syncContentDir(ctx context.Context, dstSet map[string]struct{}, d
 }
 
 func (t *Tree) Add(ctx context.Context, dst string, ctype string, src string, encoded []EncodedFile) error {
+	if err := t.addContent(ctx, dst, ctype, src, encoded); err != nil {
+		return err
+	}
+	if err := t.iterateGC(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *Tree) addContent(ctx context.Context, dst string, ctype string, src string, encoded []EncodedFile) error {
 	if dst == "" {
 		return kerrors.WithMsg(nil, "Must provide dst")
 	}
@@ -426,29 +434,23 @@ func (t *Tree) Rm(ctx context.Context, name string) error {
 		return kerrors.WithMsg(nil, "Must provide name")
 	}
 	name = path.Clean(name)
-	cfg, err := t.db.Get(ctx, name)
+	exists, err := t.db.Exists(ctx, name)
 	if err != nil {
-		return kerrors.WithMsg(err, fmt.Sprintf("Failed to get content config for %s", name))
+		return kerrors.WithMsg(err, "Failed checking content config")
 	}
-	return t.rmContent(ctx, name, *cfg)
+	if !exists {
+		return kerrors.WithMsg(err, "Content config does not exist")
+	}
+	if err := t.rmContent(ctx, name); err != nil {
+		return err
+	}
+	if err := t.iterateGC(ctx); err != nil {
+		return err
+	}
+	return nil
 }
 
-func (t *Tree) rmContent(ctx context.Context, name string, cfg ContentConfig) error {
-	for _, i := range cfg.Encoded {
-		if err := kfs.RemoveAll(t.contentDir, i.Hash); err != nil {
-			return kerrors.WithMsg(err, "Failed to remove encoded file")
-		}
-		t.log.Info(ctx, "Removed encoded file",
-			klog.AString("code", i.Code),
-			klog.AString("name", i.Hash),
-		)
-	}
-	if err := kfs.RemoveAll(t.contentDir, cfg.Hash); err != nil {
-		return kerrors.WithMsg(err, "Failed to remove content file")
-	}
-	t.log.Info(ctx, "Removed content file",
-		klog.AString("name", cfg.Hash),
-	)
+func (t *Tree) rmContent(ctx context.Context, name string) error {
 	if err := t.db.Rm(ctx, name); err != nil {
 		return kerrors.WithMsg(err, fmt.Sprintf("Failed to remove content config for %s", name))
 	}
@@ -458,35 +460,48 @@ func (t *Tree) rmContent(ctx context.Context, name string, cfg ContentConfig) er
 	return nil
 }
 
-func (t *Tree) GCContentDir(ctx context.Context) error {
-	contentSet := map[string]struct{}{}
-	if err := t.db.Iterate(ctx, func(ctx context.Context, name string, cfg ContentConfig) error {
-		contentSet[cfg.Hash] = struct{}{}
-		for _, i := range cfg.Encoded {
-			contentSet[i.Hash] = struct{}{}
-		}
-		return nil
-	}); err != nil {
-		return kerrors.WithMsg(err, "Failed iterating through tree db")
-	}
-	if err := t.rmSetDifference(contentSet); err != nil {
+func (t *Tree) GCContentDir(ctx context.Context, full bool) error {
+	if err := t.iterateGC(ctx); err != nil {
 		return err
 	}
-	return nil
-}
 
-func (t *Tree) rmSetDifference(contentSet map[string]struct{}) error {
+	if !full {
+		return nil
+	}
+
 	entries, err := fs.ReadDir(t.contentDir, ".")
 	if err != nil {
 		return kerrors.WithMsg(err, "Failed to read root content dir")
 	}
 	for _, i := range entries {
 		name := i.Name()
-		if _, ok := contentSet[name]; !ok {
+		exists, err := t.db.ContentExists(ctx, name)
+		if err != nil {
+			return kerrors.WithMsg(err, fmt.Sprintf("Failed to check content exists: %s", name))
+		}
+		if !exists {
 			if err := kfs.RemoveAll(t.contentDir, name); err != nil {
 				return kerrors.WithMsg(err, fmt.Sprintf("Failed to remove content file: %s", name))
 			}
+			t.log.Info(ctx, "Removed content file",
+				klog.AString("name", name),
+			)
 		}
+	}
+	return nil
+}
+
+func (t *Tree) iterateGC(ctx context.Context) error {
+	if err := t.db.IterateGC(ctx, func(ctx context.Context, hash string) error {
+		if err := kfs.RemoveAll(t.contentDir, hash); err != nil {
+			return kerrors.WithMsg(err, fmt.Sprintf("Failed to remove content file: %s", hash))
+		}
+		t.log.Info(ctx, "Removed content file",
+			klog.AString("name", hash),
+		)
+		return nil
+	}); err != nil {
+		return kerrors.WithMsg(err, "Failed iterating through gc candidates")
 	}
 	return nil
 }
