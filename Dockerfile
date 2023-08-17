@@ -1,4 +1,4 @@
-FROM cgr.dev/chainguard/go:1.20.4 as builder
+FROM cgr.dev/chainguard/go:latest as builder
 WORKDIR /usr/local/src/go/fsserve
 COPY go.mod go.sum ./
 RUN go mod download && go mod verify
