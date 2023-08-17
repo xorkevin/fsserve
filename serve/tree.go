@@ -21,9 +21,9 @@ import (
 
 type (
 	Tree struct {
-		log        *klog.LevelLogger
-		db         TreeDB
-		contentDir fs.FS
+		log     *klog.LevelLogger
+		db      TreeDB
+		blobDir fs.FS
 	}
 
 	EncodedFile struct {
@@ -51,11 +51,11 @@ type (
 	}
 )
 
-func NewTree(log klog.Logger, treedb TreeDB, contentDir fs.FS) *Tree {
+func NewTree(log klog.Logger, treedb TreeDB, blobDir fs.FS) *Tree {
 	return &Tree{
-		log:        klog.NewLevelLogger(log),
-		db:         treedb,
-		contentDir: contentDir,
+		log:     klog.NewLevelLogger(log),
+		db:      treedb,
+		blobDir: blobDir,
 	}
 }
 
@@ -150,13 +150,13 @@ func (t *Tree) syncContentDir(ctx context.Context, dstSet map[string]struct{}, d
 			ContentType: ctype,
 			Encoded:     make([]EncodedContent, 0, len(alts)),
 		}
-		cfg.Hash, err = t.checkAndAddFileFS(ctx, existingHash, dir, p)
+		cfg.Hash, err = t.checkAndAddBlobFS(ctx, existingHash, dir, p)
 		if err != nil {
 			return kerrors.WithMsg(err, fmt.Sprintf("Failed to add file: %s", p))
 		}
 		for _, i := range alts {
 			alt := p + i.Suffix
-			h, err := t.checkAndAddFileFS(ctx, codeToHash[i.Code], dir, alt)
+			h, err := t.checkAndAddBlobFS(ctx, codeToHash[i.Code], dir, alt)
 			if err != nil {
 				if errors.Is(err, ErrNotFound) {
 					t.log.Debug(ctx, "Skipping missing alt file",
@@ -249,12 +249,12 @@ func (t *Tree) addContent(ctx context.Context, dst string, ctype string, src str
 		ContentType: ctype,
 		Encoded:     make([]EncodedContent, 0, len(encoded)),
 	}
-	cfg.Hash, err = t.checkAndAddFile(ctx, existingHash, src)
+	cfg.Hash, err = t.checkAndAddBlob(ctx, existingHash, src)
 	if err != nil {
 		return kerrors.WithMsg(err, fmt.Sprintf("Failed to add file: %s", src))
 	}
 	for _, i := range encoded {
-		dstName, err := t.checkAndAddFile(ctx, codeToHash[i.Code], i.Name)
+		dstName, err := t.checkAndAddBlob(ctx, codeToHash[i.Code], i.Name)
 		if err != nil {
 			return kerrors.WithMsg(err, fmt.Sprintf("Failed to add encoded file: %s", i.Name))
 		}
@@ -300,15 +300,15 @@ func (t *Tree) equalCfg(a, b ContentConfig) bool {
 	return true
 }
 
-func (t *Tree) checkAndAddFile(ctx context.Context, existingHash string, srcName string) (string, error) {
+func (t *Tree) checkAndAddBlob(ctx context.Context, existingHash string, srcName string) (string, error) {
 	dir, file := path.Split(srcName)
 	dir = path.Clean(dir)
 	file = path.Clean(file)
 	fsys := os.DirFS(filepath.FromSlash(dir))
-	return t.checkAndAddFileFS(ctx, existingHash, fsys, file)
+	return t.checkAndAddBlobFS(ctx, existingHash, fsys, file)
 }
 
-func (t *Tree) checkAndAddFileFS(ctx context.Context, existingHash string, dir fs.FS, srcName string) (string, error) {
+func (t *Tree) checkAndAddBlobFS(ctx context.Context, existingHash string, dir fs.FS, srcName string) (string, error) {
 	srcInfo, err := fs.Stat(dir, srcName)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -322,14 +322,14 @@ func (t *Tree) checkAndAddFileFS(ctx context.Context, existingHash string, dir f
 
 	existingMatchesSize := false
 	if existingHash != "" {
-		if existingInfo, err := fs.Stat(t.contentDir, existingHash); err != nil {
+		if existingInfo, err := fs.Stat(t.blobDir, existingHash); err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
 				return "", kerrors.WithMsg(err, "Failed to stat existing candidate dst file")
 			}
 		} else {
 			if !existingInfo.IsDir() && existingInfo.Size() == srcInfo.Size() {
 				if !existingInfo.ModTime().Before(srcInfo.ModTime()) {
-					t.log.Info(ctx, "Skipping unchanged content file on matching size and modtime",
+					t.log.Info(ctx, "Skipping unchanged content blob on matching size and modtime",
 						klog.AString("src", srcName),
 						klog.AString("dst", existingHash),
 					)
@@ -346,10 +346,10 @@ func (t *Tree) checkAndAddFileFS(ctx context.Context, existingHash string, dir f
 	}
 
 	if existingHash != "" && dstName == existingHash && existingMatchesSize {
-		if err := kfs.Chtimes(t.contentDir, existingHash, time.Time{}, srcInfo.ModTime()); err != nil {
+		if err := kfs.Chtimes(t.blobDir, existingHash, time.Time{}, srcInfo.ModTime()); err != nil {
 			return "", kerrors.WithMsg(err, fmt.Sprintf("Failed to update mod time for dst file %s", existingHash))
 		}
-		t.log.Info(ctx, "Skipping unchanged content file on matching size and hash",
+		t.log.Info(ctx, "Skipping unchanged content blob on matching size and hash",
 			klog.AString("src", srcName),
 			klog.AString("dst", existingHash),
 		)
@@ -357,7 +357,7 @@ func (t *Tree) checkAndAddFileFS(ctx context.Context, existingHash string, dir f
 	}
 
 	// need to recheck since dstName may not be equal to existingHash
-	if dstInfo, err := fs.Stat(t.contentDir, dstName); err != nil {
+	if dstInfo, err := fs.Stat(t.blobDir, dstName); err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
 			return "", kerrors.WithMsg(err, fmt.Sprintf("Failed to stat dst file: %s", dstName))
 		}
@@ -366,7 +366,7 @@ func (t *Tree) checkAndAddFileFS(ctx context.Context, existingHash string, dir f
 			return "", kerrors.WithMsg(nil, fmt.Sprintf("Dst file %s is dir", dstName))
 		}
 		if dstInfo.Size() == srcInfo.Size() && !dstInfo.ModTime().Before(srcInfo.ModTime()) {
-			t.log.Info(ctx, "Skipping unchanged content file",
+			t.log.Info(ctx, "Skipping unchanged content blob",
 				klog.AString("src", srcName),
 				klog.AString("dst", dstName),
 			)
@@ -377,7 +377,7 @@ func (t *Tree) checkAndAddFileFS(ctx context.Context, existingHash string, dir f
 	if err := t.copyFile(dir, dstName, srcName); err != nil {
 		return "", kerrors.WithMsg(err, fmt.Sprintf("Failed copying %s to %s", srcName, dstName))
 	}
-	t.log.Info(ctx, "Added content file",
+	t.log.Info(ctx, "Added content blob",
 		klog.AString("src", srcName),
 		klog.AString("dst", dstName),
 	)
@@ -405,7 +405,7 @@ func (t *Tree) hashFile(dir fs.FS, name string) (_ string, retErr error) {
 }
 
 func (t *Tree) copyFile(dir fs.FS, dstName, srcName string) (retErr error) {
-	dstFile, err := kfs.OpenFile(t.contentDir, dstName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	dstFile, err := kfs.OpenFile(t.blobDir, dstName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return kerrors.WithMsg(err, "Failed opening dst file")
 	}
@@ -460,7 +460,7 @@ func (t *Tree) rmContent(ctx context.Context, name string) error {
 	return nil
 }
 
-func (t *Tree) GCContentDir(ctx context.Context, full bool) error {
+func (t *Tree) GCBlobDir(ctx context.Context, full bool) error {
 	if err := t.iterateGC(ctx); err != nil {
 		return err
 	}
@@ -469,9 +469,9 @@ func (t *Tree) GCContentDir(ctx context.Context, full bool) error {
 		return nil
 	}
 
-	entries, err := fs.ReadDir(t.contentDir, ".")
+	entries, err := fs.ReadDir(t.blobDir, ".")
 	if err != nil {
-		return kerrors.WithMsg(err, "Failed to read root content dir")
+		return kerrors.WithMsg(err, "Failed to read content blob dir")
 	}
 	for _, i := range entries {
 		name := i.Name()
@@ -480,10 +480,10 @@ func (t *Tree) GCContentDir(ctx context.Context, full bool) error {
 			return kerrors.WithMsg(err, fmt.Sprintf("Failed to check content exists: %s", name))
 		}
 		if !exists {
-			if err := kfs.RemoveAll(t.contentDir, name); err != nil {
-				return kerrors.WithMsg(err, fmt.Sprintf("Failed to remove content file: %s", name))
+			if err := kfs.RemoveAll(t.blobDir, name); err != nil {
+				return kerrors.WithMsg(err, fmt.Sprintf("Failed to remove content blob: %s", name))
 			}
-			t.log.Info(ctx, "Removed content file",
+			t.log.Info(ctx, "Removed content blob",
 				klog.AString("name", name),
 			)
 		}
@@ -493,10 +493,10 @@ func (t *Tree) GCContentDir(ctx context.Context, full bool) error {
 
 func (t *Tree) iterateGC(ctx context.Context) error {
 	if err := t.db.IterateGC(ctx, func(ctx context.Context, hash string) error {
-		if err := kfs.RemoveAll(t.contentDir, hash); err != nil {
-			return kerrors.WithMsg(err, fmt.Sprintf("Failed to remove content file: %s", hash))
+		if err := kfs.RemoveAll(t.blobDir, hash); err != nil {
+			return kerrors.WithMsg(err, fmt.Sprintf("Failed to remove content blob: %s", hash))
 		}
-		t.log.Info(ctx, "Removed content file",
+		t.log.Info(ctx, "Removed content blob",
 			klog.AString("name", hash),
 		)
 		return nil

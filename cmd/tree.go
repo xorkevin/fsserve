@@ -31,8 +31,8 @@ func (c *Cmd) getTreeCmd() *cobra.Command {
 
 	addCmd := &cobra.Command{
 		Use:               "add",
-		Short:             "Adds content and updates the content tree",
-		Long:              `Adds content and updates the content tree`,
+		Short:             "Adds a content blob and updates the tree",
+		Long:              `Adds a content blob and updates the tree`,
 		Run:               c.execTreeAdd,
 		DisableAutoGenTag: true,
 	}
@@ -44,8 +44,8 @@ func (c *Cmd) getTreeCmd() *cobra.Command {
 
 	rmCmd := &cobra.Command{
 		Use:               "rm",
-		Short:             "Removes content and updates the content tree",
-		Long:              `Removes content and updates the content tree`,
+		Short:             "Removes a content blob and updates the tree",
+		Long:              `Removes a content blob and updates the tree`,
 		Run:               c.execTreeRm,
 		DisableAutoGenTag: true,
 	}
@@ -73,8 +73,8 @@ func (c *Cmd) getTreeCmd() *cobra.Command {
 
 	gcCmd := &cobra.Command{
 		Use:               "gc",
-		Short:             "GCs the content dir",
-		Long:              `GCs the content dir`,
+		Short:             "GCs the content blob dir",
+		Long:              `GCs the content blob dir`,
 		Run:               c.execTreeGC,
 		DisableAutoGenTag: true,
 	}
@@ -97,12 +97,12 @@ func (c *Cmd) execTreeAdd(cmd *cobra.Command, args []string) {
 			Name: name,
 		})
 	}
-	contentDir, treedb, err := c.getTree("rw")
+	blobDir, treedb, err := c.getTree("rw")
 	if err != nil {
 		c.logFatal(err)
 		return
 	}
-	tree := serve.NewTree(c.log.Logger, treedb, contentDir)
+	tree := serve.NewTree(c.log.Logger, treedb, blobDir)
 	if err := tree.Add(context.Background(), c.treeFlags.dst, c.treeFlags.ctype, c.treeFlags.src, enc); err != nil {
 		c.logFatal(err)
 		return
@@ -110,12 +110,12 @@ func (c *Cmd) execTreeAdd(cmd *cobra.Command, args []string) {
 }
 
 func (c *Cmd) execTreeRm(cmd *cobra.Command, args []string) {
-	contentDir, treedb, err := c.getTree("rw")
+	blobDir, treedb, err := c.getTree("rw")
 	if err != nil {
 		c.logFatal(err)
 		return
 	}
-	tree := serve.NewTree(c.log.Logger, treedb, contentDir)
+	tree := serve.NewTree(c.log.Logger, treedb, blobDir)
 	if err := tree.Rm(context.Background(), c.treeFlags.dst); err != nil {
 		c.logFatal(err)
 		return
@@ -123,12 +123,12 @@ func (c *Cmd) execTreeRm(cmd *cobra.Command, args []string) {
 }
 
 func (c *Cmd) execTreeInit(cmd *cobra.Command, args []string) {
-	contentDir, treedb, err := c.getTree("rw")
+	blobDir, treedb, err := c.getTree("rw")
 	if err != nil {
 		c.logFatal(err)
 		return
 	}
-	tree := serve.NewTree(c.log.Logger, treedb, contentDir)
+	tree := serve.NewTree(c.log.Logger, treedb, blobDir)
 	if err := tree.Setup(context.Background()); err != nil {
 		c.logFatal(err)
 		return
@@ -141,12 +141,12 @@ func (c *Cmd) execTreeSync(cmd *cobra.Command, args []string) {
 		c.logFatal(kerrors.WithMsg(err, "Failed to read config sync"))
 		return
 	}
-	contentDir, treedb, err := c.getTree("rw")
+	blobDir, treedb, err := c.getTree("rw")
 	if err != nil {
 		c.logFatal(err)
 		return
 	}
-	tree := serve.NewTree(c.log.Logger, treedb, contentDir)
+	tree := serve.NewTree(c.log.Logger, treedb, blobDir)
 	if err := tree.SyncContent(context.Background(), cfg, c.treeFlags.rmAfter); err != nil {
 		c.logFatal(err)
 		return
@@ -154,13 +154,13 @@ func (c *Cmd) execTreeSync(cmd *cobra.Command, args []string) {
 }
 
 func (c *Cmd) execTreeGC(cmd *cobra.Command, args []string) {
-	contentDir, treedb, err := c.getTree("ro")
+	blobDir, treedb, err := c.getTree("ro")
 	if err != nil {
 		c.logFatal(err)
 		return
 	}
-	tree := serve.NewTree(c.log.Logger, treedb, contentDir)
-	if err := tree.GCContentDir(context.Background(), c.treeFlags.full); err != nil {
+	tree := serve.NewTree(c.log.Logger, treedb, blobDir)
+	if err := tree.GCBlobDir(context.Background(), c.treeFlags.full); err != nil {
 		c.logFatal(err)
 		return
 	}

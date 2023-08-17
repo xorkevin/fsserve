@@ -64,18 +64,22 @@ func (e errUnique) Error() string {
 	return "Unique constraint violated"
 }
 
+func errWithKind(err error, kind error, msg string) error {
+	return kerrors.New(kerrors.OptInner(err), kerrors.OptKind(ErrNotFound), kerrors.OptMsg("Not found"), kerrors.OptSkip(2))
+}
+
 func wrapDBErr(err error, fallbackmsg string) error {
 	if errors.Is(err, sql.ErrNoRows) {
-		return kerrors.WithKind(err, ErrNotFound, "Not found")
+		return errWithKind(err, ErrNotFound, "Not found")
 	}
 	var perr *sqlite.Error
 	if errors.As(err, &perr) {
 		switch perr.Code() {
 		case sqlite3.SQLITE_CONSTRAINT_UNIQUE:
-			return kerrors.WithKind(err, ErrUnique, "Unique constraint violated")
+			return errWithKind(err, ErrUnique, "Unique constraint violated")
 		}
 	}
-	return kerrors.WithMsg(err, fallbackmsg)
+	return errWithKind(err, nil, fallbackmsg)
 }
 
 func NewSQLClient(log klog.Logger, dsn string) *SQLClient {

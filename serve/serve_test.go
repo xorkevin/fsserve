@@ -243,7 +243,7 @@ func TestServer(t *testing.T) {
 			_, ok := contentDir.Fsys["ishouldbegone"]
 			assert.True(ok)
 			assert.Equal(len(srcFiles)+len(srcGzipFiles)+1, len(contentDir.Fsys))
-			assert.NoError(tree.GCContentDir(context.Background(), true))
+			assert.NoError(tree.GCBlobDir(context.Background(), true))
 			assert.Equal(len(srcFiles)+len(srcGzipFiles), len(contentDir.Fsys))
 			_, ok = contentDir.Fsys["ishouldbegone"]
 			assert.False(ok)
