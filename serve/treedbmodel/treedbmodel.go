@@ -20,7 +20,7 @@ type (
 		Insert(ctx context.Context, m *Model, enc []*Encoded) error
 		Update(ctx context.Context, m *Model, enc []*Encoded) error
 		Delete(ctx context.Context, name string) error
-		ListGCCandidates(ctx context.Context, limit int) ([]GCCandiate, error)
+		ListGCCandidates(ctx context.Context, limit int) ([]GCCandidate, error)
 		DequeueGCCandidate(ctx context.Context, hash string) error
 		Setup(ctx context.Context) error
 	}
@@ -36,32 +36,32 @@ type (
 	//forge:model ct
 	//forge:model:query ct
 	Model struct {
-		Name        string `model:"name,VARCHAR(4095) PRIMARY KEY" query:"name;getoneeq,name;deleq,name;getgroup;getgroupeq,name|gt"`
-		Hash        string `model:"hash,VARCHAR(2047) NOT NULL;index" query:"hash"`
-		ContentType string `model:"contenttype,VARCHAR(255) NOT NULL" query:"contenttype"`
+		Name        string `model:"name,VARCHAR(4095) PRIMARY KEY"`
+		Hash        string `model:"hash,VARCHAR(2047) NOT NULL"`
+		ContentType string `model:"contenttype,VARCHAR(255) NOT NULL"`
 	}
 
 	//forge:model:query ct
 	ctProps struct {
-		Hash        string `query:"hash;updeq,name"`
-		ContentType string `query:"contenttype"`
+		Hash        string `model:"hash"`
+		ContentType string `model:"contenttype"`
 	}
 
 	// Encoded is encoded content
 	//forge:model enc
 	//forge:model:query enc
 	Encoded struct {
-		Name  string `model:"name,VARCHAR(4095)" query:"name;deleq,name"`
-		Code  string `model:"code,VARCHAR(255)" query:"code"`
-		Order int    `model:"ord,INT NOT NULL" query:"ord;getgroupeq,name"`
-		Hash  string `model:"hash,VARCHAR(2047) NOT NULL, PRIMARY KEY (name, code), UNIQUE (name, ord);index" query:"hash"`
+		Name  string `model:"name,VARCHAR(4095)"`
+		Code  string `model:"code,VARCHAR(255)"`
+		Order int    `model:"ord,INT NOT NULL"`
+		Hash  string `model:"hash,VARCHAR(2047) NOT NULL"`
 	}
 
 	// GCCandidate are candidates for GC
 	//forge:model gc
 	//forge:model:query gc
-	GCCandiate struct {
-		Hash string `model:"hash,VARCHAR(2047) PRIMARY KEY" query:"hash;getgroup;deleq,hash"`
+	GCCandidate struct {
+		Hash string `model:"hash,VARCHAR(2047) PRIMARY KEY"`
 	}
 )
 
@@ -128,13 +128,13 @@ func (r *repo) ContentExists(ctx context.Context, hash string) (bool, error) {
 
 func (r *repo) List(ctx context.Context, limit int, after string) ([]Model, error) {
 	if after == "" {
-		m, err := r.ctTable.GetModelOrdName(ctx, r.db, true, limit, 0)
+		m, err := r.ctTable.GetModelAll(ctx, r.db, limit, 0)
 		if err != nil {
 			return nil, kerrors.WithMsg(err, "Failed to get content configs")
 		}
 		return m, nil
 	}
-	m, err := r.ctTable.GetModelGtNameOrdName(ctx, r.db, after, true, limit, 0)
+	m, err := r.ctTable.GetModelGtName(ctx, r.db, after, limit, 0)
 	if err != nil {
 		return nil, kerrors.WithMsg(err, "Failed to get content configs")
 	}
@@ -142,11 +142,11 @@ func (r *repo) List(ctx context.Context, limit int, after string) ([]Model, erro
 }
 
 func (r *repo) Get(ctx context.Context, name string) (*Model, []Encoded, error) {
-	m, err := r.ctTable.GetModelEqName(ctx, r.db, name)
+	m, err := r.ctTable.GetModelByName(ctx, r.db, name)
 	if err != nil {
 		return nil, nil, kerrors.WithMsg(err, "Failed to get content config")
 	}
-	enc, err := r.encTable.GetEncodedEqNameOrdOrder(ctx, r.db, m.Name, true, 128, 0)
+	enc, err := r.encTable.GetEncodedByName(ctx, r.db, m.Name, 128, 0)
 	if err != nil {
 		return nil, nil, kerrors.WithMsg(err, "Failed to get encoded content configs")
 	}
@@ -173,7 +173,7 @@ func (r *repo) queueGC(ctx context.Context, name string) error {
 }
 
 func (r *repo) delEncoded(ctx context.Context, name string) error {
-	if err := r.encTable.DelEqName(ctx, r.db, name); err != nil {
+	if err := r.encTable.DelByName(ctx, r.db, name); err != nil {
 		return kerrors.WithMsg(err, "Failed to delete encoded content configs")
 	}
 	return nil
@@ -216,7 +216,7 @@ func (r *repo) Update(ctx context.Context, m *Model, enc []*Encoded) error {
 	if err := r.delEncoded(ctx, m.Name); err != nil {
 		return err
 	}
-	if err := r.ctTable.UpdctPropsEqName(ctx, r.db, &ctProps{
+	if err := r.ctTable.UpdctPropsByName(ctx, r.db, &ctProps{
 		Hash:        m.Hash,
 		ContentType: m.ContentType,
 	}, m.Name); err != nil {
@@ -232,17 +232,17 @@ func (r *repo) Delete(ctx context.Context, name string) error {
 	if err := r.queueGC(ctx, name); err != nil {
 		return err
 	}
-	if err := r.encTable.DelEqName(ctx, r.db, name); err != nil {
+	if err := r.encTable.DelByName(ctx, r.db, name); err != nil {
 		return kerrors.WithMsg(err, "Failed to delete encoded content configs")
 	}
-	if err := r.ctTable.DelEqName(ctx, r.db, name); err != nil {
+	if err := r.ctTable.DelByName(ctx, r.db, name); err != nil {
 		return kerrors.WithMsg(err, "Failed to delete content config")
 	}
 	return nil
 }
 
-func (r *repo) ListGCCandidates(ctx context.Context, limit int) ([]GCCandiate, error) {
-	m, err := r.gcTable.GetGCCandiateOrdHash(ctx, r.db, true, limit, 0)
+func (r *repo) ListGCCandidates(ctx context.Context, limit int) ([]GCCandidate, error) {
+	m, err := r.gcTable.GetGCCandidateAll(ctx, r.db, limit, 0)
 	if err != nil {
 		return nil, kerrors.WithMsg(err, "Failed getting gc candidates")
 	}
@@ -250,7 +250,7 @@ func (r *repo) ListGCCandidates(ctx context.Context, limit int) ([]GCCandiate, e
 }
 
 func (r *repo) DequeueGCCandidate(ctx context.Context, hash string) error {
-	if err := r.gcTable.DelEqHash(ctx, r.db, hash); err != nil {
+	if err := r.gcTable.DelByHash(ctx, r.db, hash); err != nil {
 		return kerrors.WithMsg(err, "Failed dequeueing gc candidate")
 	}
 	return nil
