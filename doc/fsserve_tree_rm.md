@@ -1,10 +1,10 @@
 ## fsserve tree rm
 
-Removes content and updates the content tree
+Removes a content blob and updates the tree
 
 ### Synopsis
 
-Removes content and updates the content tree
+Removes a content blob and updates the tree
 
 ```
 fsserve tree rm [flags]
@@ -23,6 +23,7 @@ fsserve tree rm [flags]
   -b, --base string        static files base
       --config string      config file (default is .fsserve.json)
       --log-level string   log level (default "info")
+      --log-plain          output plain text logs
 ```
 
 ### SEE ALSO

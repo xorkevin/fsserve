@@ -32,6 +32,7 @@ type (
 	rootFlags struct {
 		cfgFile  string
 		logLevel string
+		logPlain bool
 	}
 )
 
@@ -52,6 +53,7 @@ func (c *Cmd) Execute() {
 	}
 	rootCmd.PersistentFlags().StringVar(&c.rootFlags.cfgFile, "config", "", "config file (default is .fsserve.json)")
 	rootCmd.PersistentFlags().StringVar(&c.rootFlags.logLevel, "log-level", "info", "log level")
+	rootCmd.PersistentFlags().BoolVar(&c.rootFlags.logPlain, "log-plain", false, "output plain text logs")
 
 	rootCmd.PersistentFlags().StringVarP(&c.serveFlags.base, "base", "b", "", "static files base")
 
@@ -147,8 +149,18 @@ func (c *Cmd) getTree(mode string) (fs.FS, serve.TreeDB, error) {
 
 // initConfig reads in config file and ENV variables if set.
 func (c *Cmd) initConfig(cmd *cobra.Command, args []string) {
+	logWriter := klog.NewSyncWriter(os.Stderr)
+	var handler *klog.SlogHandler
+	if c.rootFlags.logPlain {
+		handler = klog.NewTextSlogHandler(logWriter)
+		handler.FieldTimeInfo = ""
+		handler.FieldCaller = ""
+		handler.FieldMod = ""
+	} else {
+		handler = klog.NewJSONSlogHandler(logWriter)
+	}
 	c.log = klog.NewLevelLogger(klog.New(
-		klog.OptHandler(klog.NewJSONSlogHandler(klog.NewSyncWriter(os.Stderr))),
+		klog.OptHandler(handler),
 		klog.OptMinLevelStr(c.rootFlags.logLevel),
 	))
 

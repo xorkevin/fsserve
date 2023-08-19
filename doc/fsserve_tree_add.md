@@ -1,10 +1,10 @@
 ## fsserve tree add
 
-Adds content and updates the content tree
+Adds a content blob and updates the tree
 
 ### Synopsis
 
-Adds content and updates the content tree
+Adds a content blob and updates the tree
 
 ```
 fsserve tree add [flags]
@@ -26,6 +26,7 @@ fsserve tree add [flags]
   -b, --base string        static files base
       --config string      config file (default is .fsserve.json)
       --log-level string   log level (default "info")
+      --log-plain          output plain text logs
 ```
 
 ### SEE ALSO

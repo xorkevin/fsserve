@@ -1,10 +1,10 @@
 ## fsserve tree gc
 
-GCs the content dir
+GCs the content blob dir
 
 ### Synopsis
 
-GCs the content dir
+GCs the content blob dir
 
 ```
 fsserve tree gc [flags]
@@ -23,6 +23,7 @@ fsserve tree gc [flags]
   -b, --base string        static files base
       --config string      config file (default is .fsserve.json)
       --log-level string   log level (default "info")
+      --log-plain          output plain text logs
 ```
 
 ### SEE ALSO

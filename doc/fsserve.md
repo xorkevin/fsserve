@@ -13,6 +13,7 @@ A file system http server
       --config string      config file (default is .fsserve.json)
   -h, --help               help for fsserve
       --log-level string   log level (default "info")
+      --log-plain          output plain text logs
 ```
 
 ### SEE ALSO
