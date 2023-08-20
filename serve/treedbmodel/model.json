@@ -1,79 +1,82 @@
 {
-  "ct": {
-    "model": {
-      "indicies": [{"columns": ["hash"]}]
+  "$schema": "https://xorkevin.dev/forge/schema/modelschema.json",
+  "models": {
+    "ct": {
+      "model": {
+        "indicies": [{"columns": ["hash"]}]
+      },
+      "queries": {
+        "Model": [
+          {
+            "kind": "getoneeq",
+            "name": "ByName",
+            "conditions": [{"col": "name"}]
+          },
+          {
+            "kind": "deleq",
+            "name": "ByName",
+            "conditions": [{"col": "name"}]
+          },
+          {
+            "kind": "getgroup",
+            "name": "All",
+            "order": [{"col": "name"}]
+          },
+          {
+            "kind": "getgroupeq",
+            "name": "GtName",
+            "conditions": [{"col": "name", "cond": "gt"}],
+            "order": [{"col": "name"}]
+          }
+        ],
+        "ctProps": [
+          {
+            "kind": "updeq",
+            "name": "ByName",
+            "conditions": [{"col": "name"}]
+          }
+        ]
+      }
     },
-    "queries": {
-      "Model": [
-        {
-          "kind": "getoneeq",
-          "name": "ByName",
-          "conditions": [{"col": "name"}]
-        },
-        {
-          "kind": "deleq",
-          "name": "ByName",
-          "conditions": [{"col": "name"}]
-        },
-        {
-          "kind": "getgroup",
-          "name": "All",
-          "order": [{"col": "name"}]
-        },
-        {
-          "kind": "getgroupeq",
-          "name": "GtName",
-          "conditions": [{"col": "name", "cond": "gt"}],
-          "order": [{"col": "name"}]
-        }
-      ],
-      "ctProps": [
-        {
-          "kind": "updeq",
-          "name": "ByName",
-          "conditions": [{"col": "name"}]
-        }
-      ]
-    }
-  },
-  "enc": {
-    "model": {
-      "constraints": [
-        {"kind": "PRIMARY KEY", "columns": ["name", "code"]},
-        {"kind": "UNIQUE", "columns": ["name", "ord"]}
-      ],
-      "indicies": [{"columns": ["hash"]}]
+    "enc": {
+      "model": {
+        "constraints": [
+          {"kind": "PRIMARY KEY", "columns": ["name", "code"]},
+          {"kind": "UNIQUE", "columns": ["name", "ord"]}
+        ],
+        "indicies": [{"columns": ["hash"]}]
+      },
+      "queries": {
+        "Encoded": [
+          {
+            "kind": "deleq",
+            "name": "ByName",
+            "conditions": [{"col": "name"}]
+          },
+          {
+            "kind": "getgroupeq",
+            "name": "ByName",
+            "conditions": [{"col": "name"}],
+            "order": [{"col": "ord"}]
+          }
+        ]
+      }
     },
-    "queries": {
-      "Encoded": [
-        {
-          "kind": "deleq",
-          "name": "ByName",
-          "conditions": [{"col": "name"}]
-        },
-        {
-          "kind": "getgroupeq",
-          "name": "ByName",
-          "conditions": [{"col": "name"}],
-          "order": [{"col": "ord"}]
-        }
-      ]
-    }
-  },
-  "gc": {
-    "queries": {
-      "GCCandidate": [
-        {
-          "kind": "getgroup",
-          "name": "All",
-          "order": [{"col": "hash"}]
-        },
-        {
-          "kind": "deleq",
-          "name": "ByHash",
-          "conditions": [{"col": "hash"}]
-        }
-      ]
+    "gc": {
+      "queries": {
+        "GCCandidate": [
+          {
+            "kind": "getgroup",
+            "name": "All",
+            "order": [{"col": "hash"}]
+          },
+          {
+            "kind": "deleq",
+            "name": "ByHash",
+            "conditions": [{"col": "hash"}]
+          }
+        ]
+      }
     }
   }
 }
