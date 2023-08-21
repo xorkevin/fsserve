@@ -3,7 +3,12 @@
   "models": {
     "ct": {
       "model": {
-        "indicies": [{"columns": ["hash"]}]
+        "indicies": [
+          {
+            "name": "hash",
+            "columns": [{"col": "hash"}]
+          }
+        ]
       },
       "queries": {
         "Model": [
@@ -44,7 +49,12 @@
           {"kind": "PRIMARY KEY", "columns": ["name", "code"]},
           {"kind": "UNIQUE", "columns": ["name", "ord"]}
         ],
-        "indicies": [{"columns": ["hash"]}]
+        "indicies": [
+          {
+            "name": "hash",
+            "columns": [{"col": "hash"}]
+          }
+        ]
       },
       "queries": {
         "Encoded": [

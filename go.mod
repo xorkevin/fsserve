@@ -10,7 +10,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 	golang.org/x/crypto v0.12.0
 	modernc.org/sqlite v1.25.0
-	xorkevin.dev/forge v0.5.1
+	xorkevin.dev/forge v0.5.2
 	xorkevin.dev/kerrors v0.1.5
 	xorkevin.dev/kfs v0.1.2
 	xorkevin.dev/klog v0.1.0
