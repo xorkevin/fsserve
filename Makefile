@@ -2,7 +2,7 @@
 
 all: install ## Default
 
-install: ## Install forge
+install: ## Install fsserve
 	go install -trimpath -ldflags "-w -s" .
 
 ## TESTS
