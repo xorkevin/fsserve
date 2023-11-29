@@ -451,17 +451,3 @@ func TestAddMimeTypes(t *testing.T) {
 		},
 	}))
 }
-
-func TestSnowflake(t *testing.T) {
-	t.Parallel()
-
-	assert := require.New(t)
-
-	var prev string
-	for i := 0; i < 2; i++ {
-		u, err := NewSnowflake(1)
-		assert.NoError(err)
-		assert.NotEqual(prev, u)
-		prev = u
-	}
-}

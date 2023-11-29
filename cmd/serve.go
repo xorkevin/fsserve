@@ -59,7 +59,7 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	instance, err := serve.NewSnowflake(8)
+	instance, err := serve.NewRandSnowflake()
 	if err != nil {
 		c.logFatal(kerrors.WithMsg(err, "Failed to generate instance id"))
 		return
@@ -90,7 +90,7 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 		treedb,
 		contentDir,
 		serve.Config{
-			Instance: instance,
+			Instance: instance.Base64(),
 			Proxies:  proxies,
 		},
 	)

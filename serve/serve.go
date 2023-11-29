@@ -3,7 +3,7 @@ package serve
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base32"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -360,44 +360,43 @@ func ipnetsContain(ip netip.Addr, ipnet []netip.Prefix) bool {
 	return false
 }
 
-var base32RawHexEncoding = base32.HexEncoding.WithPadding(base32.NoPadding)
+var base64HexEncoding = base64.NewEncoding("-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz").WithPadding(base64.NoPadding)
 
-const (
-	timeSize = 8
+type (
+	// Snowflake is a short, time orderable unique identifier
+	Snowflake uint64
 )
 
-// NewSnowflake creates a new snowflake uid
-func NewSnowflake(randsize int) (string, error) {
-	u := make([]byte, timeSize+randsize)
+// NewSnowflake returns a new [Snowflake] with a provided seq number
+func NewSnowflake(seq uint32) Snowflake {
 	now := uint64(time.Now().Round(0).UnixMilli())
-	binary.BigEndian.PutUint64(u[:timeSize], now)
-	_, err := rand.Read(u[timeSize:])
-	if err != nil {
-		return "", kerrors.WithMsg(err, "Failed reading crypto/rand")
-	}
-	return strings.ToLower(base32RawHexEncoding.EncodeToString(u)), nil
+	now = now << 24
+	now |= (uint64(seq) & 0xffffff)
+	return Snowflake(now)
 }
 
-const (
-	reqIDUnusedTimeSize    = 3
-	reqIDTimeSize          = 5
-	reqIDTotalTimeSize     = reqIDUnusedTimeSize + reqIDTimeSize
-	reqIDCounterSize       = 3
-	reqIDUnusedCounterSize = 1
-	reqIDTotalCounterSize  = reqIDCounterSize + reqIDUnusedCounterSize
-	reqIDSize              = reqIDTimeSize + reqIDCounterSize
-	reqIDCounterShift      = 8 * reqIDUnusedCounterSize
-)
+// Base64 returns the full raw bytes encoded in unpadded base64hex
+func (s Snowflake) Base64() string {
+	var u [8]byte
+	binary.BigEndian.PutUint64(u[:], uint64(s))
+	return base64HexEncoding.EncodeToString(u[:])
+}
+
+// NewRandSnowflake returns a new [Snowflake] with random bytes for the seq
+func NewRandSnowflake() (Snowflake, error) {
+	var u [3]byte
+	_, err := rand.Read(u[:])
+	if err != nil {
+		return 0, kerrors.WithMsg(err, "Failed reading crypto/rand")
+	}
+	k := uint32(u[0])
+	k |= uint32(u[1]) << 8
+	k |= uint32(u[2]) << 16
+	return NewSnowflake(k), nil
+}
 
 func (s *Server) lreqID() string {
-	count := s.reqcount.Add(1)
-	// id looks like:
-	// reqIDUnusedTimeSize | reqIDTimeSize | reqIDCounterSize | reqIDUnusedCounterSize
-	b := [reqIDTotalTimeSize + reqIDTotalCounterSize]byte{}
-	now := uint64(time.Now().Round(0).UnixMilli())
-	binary.BigEndian.PutUint64(b[:reqIDTotalTimeSize], now)
-	binary.BigEndian.PutUint32(b[reqIDTotalTimeSize:], count<<reqIDCounterShift)
-	return s.config.Instance + "-" + strings.ToLower(base32RawHexEncoding.EncodeToString(b[reqIDUnusedTimeSize:reqIDUnusedTimeSize+reqIDSize]))
+	return NewSnowflake(s.reqcount.Add(1)).Base64() + s.config.Instance
 }
 
 type (
