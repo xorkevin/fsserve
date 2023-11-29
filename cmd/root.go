@@ -110,12 +110,12 @@ func (c *Cmd) getContentFS(rootDir fs.FS, base string) (fs.FS, error) {
 func (c *Cmd) getTreeDB(rootDir fs.FS, base string, mode string) (serve.TreeDB, error) {
 	// url must be in the form of
 	// file:rel/path/to/file.db?optquery=value&otheroptquery=value
-	u, err := url.Parse(viper.GetString("treedb"))
+	u, err := url.Parse("file:" + viper.GetString("treedb"))
 	if err != nil {
 		return nil, kerrors.WithMsg(err, "Invalid tree db sqlite dsn")
 	}
 	if u.Opaque == "" {
-		return nil, kerrors.WithMsg(err, "Tree db sqlite dsn must be relative")
+		return nil, kerrors.WithMsg(nil, "Tree db sqlite dsn must be relative")
 	}
 	u.Opaque = path.Join(base, u.Opaque)
 	q := u.Query()
