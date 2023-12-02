@@ -317,7 +317,7 @@ func (t *Tree) checkAndAddBlobFS(ctx context.Context, existingHash string, dir f
 		return "", kerrors.WithMsg(err, "Failed to stat src file")
 	}
 	if srcInfo.IsDir() {
-		return "", kerrors.WithMsg(nil, fmt.Sprintf("Src file is dir"))
+		return "", kerrors.WithMsg(nil, "Src file is dir")
 	}
 
 	existingMatchesSize := false
