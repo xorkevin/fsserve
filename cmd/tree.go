@@ -68,7 +68,7 @@ func (c *Cmd) getTreeCmd() *cobra.Command {
 		Run:               c.execTreeSync,
 		DisableAutoGenTag: true,
 	}
-	syncCmd.PersistentFlags().BoolVar(&c.treeFlags.rmAfter, "rm-after", false, "removes unsynced content")
+	syncCmd.PersistentFlags().BoolVar(&c.treeFlags.rmAfter, "rm", false, "removes unsynced content")
 	treeCmd.AddCommand(syncCmd)
 
 	gcCmd := &cobra.Command{
