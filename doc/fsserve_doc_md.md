@@ -1,10 +1,10 @@
 ## fsserve doc md
 
-generate markdown documentation for fsserve
+Generate markdown documentation for fsserve
 
 ### Synopsis
 
-generate markdown documentation for fsserve
+Generate markdown documentation for fsserve
 
 ```
 fsserve doc md [flags]
@@ -28,5 +28,5 @@ fsserve doc md [flags]
 
 ### SEE ALSO
 
-* [fsserve doc](fsserve_doc.md)	 - generate documentation for fsserve
+* [fsserve doc](fsserve_doc.md)	 - Generate documentation for fsserve
 

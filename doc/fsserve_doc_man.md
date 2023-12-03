@@ -1,10 +1,10 @@
 ## fsserve doc man
 
-generate man page documentation for fsserve
+Generate man page documentation for fsserve
 
 ### Synopsis
 
-generate man page documentation for fsserve
+Generate man page documentation for fsserve
 
 ```
 fsserve doc man [flags]
@@ -28,5 +28,5 @@ fsserve doc man [flags]
 
 ### SEE ALSO
 
-* [fsserve doc](fsserve_doc.md)	 - generate documentation for fsserve
+* [fsserve doc](fsserve_doc.md)	 - Generate documentation for fsserve
 

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -97,39 +98,60 @@ func (c *Cmd) execTreeAdd(cmd *cobra.Command, args []string) {
 			Name: name,
 		})
 	}
-	blobDir, treedb, err := c.getTree("rw")
+	blobDir, treedb, d, err := c.getTree("rw")
 	if err != nil {
 		c.logFatal(err)
 		return
 	}
-	tree := serve.NewTree(c.log.Logger, treedb, blobDir)
-	if err := tree.Add(context.Background(), c.treeFlags.dst, c.treeFlags.ctype, c.treeFlags.src, enc); err != nil {
+	if err := func() (retErr error) {
+		defer func() {
+			if err := d.Close(); err != nil {
+				retErr = errors.Join(retErr, kerrors.WithMsg(err, "Failed to close sql client"))
+			}
+		}()
+		tree := serve.NewTree(c.log.Logger, treedb, blobDir)
+		return tree.Add(context.Background(), c.treeFlags.dst, c.treeFlags.ctype, c.treeFlags.src, enc)
+	}(); err != nil {
 		c.logFatal(err)
 		return
 	}
 }
 
 func (c *Cmd) execTreeRm(cmd *cobra.Command, args []string) {
-	blobDir, treedb, err := c.getTree("rw")
+	blobDir, treedb, d, err := c.getTree("rw")
 	if err != nil {
 		c.logFatal(err)
 		return
 	}
-	tree := serve.NewTree(c.log.Logger, treedb, blobDir)
-	if err := tree.Rm(context.Background(), c.treeFlags.dst); err != nil {
+	if err := func() (retErr error) {
+		defer func() {
+			if err := d.Close(); err != nil {
+				retErr = errors.Join(retErr, kerrors.WithMsg(err, "Failed to close sql client"))
+			}
+		}()
+		tree := serve.NewTree(c.log.Logger, treedb, blobDir)
+		return tree.Rm(context.Background(), c.treeFlags.dst)
+	}(); err != nil {
 		c.logFatal(err)
 		return
 	}
 }
 
 func (c *Cmd) execTreeInit(cmd *cobra.Command, args []string) {
-	blobDir, treedb, err := c.getTree("rwc")
+	blobDir, treedb, d, err := c.getTree("rwc")
 	if err != nil {
 		c.logFatal(err)
 		return
 	}
-	tree := serve.NewTree(c.log.Logger, treedb, blobDir)
-	if err := tree.Setup(context.Background()); err != nil {
+	if err := func() (retErr error) {
+		defer func() {
+			if err := d.Close(); err != nil {
+				retErr = errors.Join(retErr, kerrors.WithMsg(err, "Failed to close sql client"))
+			}
+		}()
+		tree := serve.NewTree(c.log.Logger, treedb, blobDir)
+		return tree.Setup(context.Background())
+	}(); err != nil {
 		c.logFatal(err)
 		return
 	}
@@ -141,26 +163,40 @@ func (c *Cmd) execTreeSync(cmd *cobra.Command, args []string) {
 		c.logFatal(kerrors.WithMsg(err, "Failed to read config sync"))
 		return
 	}
-	blobDir, treedb, err := c.getTree("rw")
+	blobDir, treedb, d, err := c.getTree("rw")
 	if err != nil {
 		c.logFatal(err)
 		return
 	}
-	tree := serve.NewTree(c.log.Logger, treedb, blobDir)
-	if err := tree.SyncContent(context.Background(), cfg, c.treeFlags.rmAfter); err != nil {
+	if err := func() (retErr error) {
+		defer func() {
+			if err := d.Close(); err != nil {
+				retErr = errors.Join(retErr, kerrors.WithMsg(err, "Failed to close sql client"))
+			}
+		}()
+		tree := serve.NewTree(c.log.Logger, treedb, blobDir)
+		return tree.SyncContent(context.Background(), cfg, c.treeFlags.rmAfter)
+	}(); err != nil {
 		c.logFatal(err)
 		return
 	}
 }
 
 func (c *Cmd) execTreeGC(cmd *cobra.Command, args []string) {
-	blobDir, treedb, err := c.getTree("ro")
+	blobDir, treedb, d, err := c.getTree("ro")
 	if err != nil {
 		c.logFatal(err)
 		return
 	}
-	tree := serve.NewTree(c.log.Logger, treedb, blobDir)
-	if err := tree.GCBlobDir(context.Background(), c.treeFlags.full); err != nil {
+	if err := func() (retErr error) {
+		defer func() {
+			if err := d.Close(); err != nil {
+				retErr = errors.Join(retErr, kerrors.WithMsg(err, "Failed to close sql client"))
+			}
+		}()
+		tree := serve.NewTree(c.log.Logger, treedb, blobDir)
+		return tree.GCBlobDir(context.Background(), c.treeFlags.full)
+	}(); err != nil {
 		c.logFatal(err)
 		return
 	}

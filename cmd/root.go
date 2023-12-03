@@ -108,7 +108,7 @@ func (c *Cmd) getContentFS(rootDir fs.FS, base string) (fs.FS, error) {
 	return contentDir, nil
 }
 
-func (c *Cmd) getTreeDB(rootDir fs.FS, base string, mode string) (serve.TreeDB, error) {
+func (c *Cmd) getTreeDB(rootDir fs.FS, base string, mode string) (serve.TreeDB, *db.SQLClient, error) {
 	// url must be in the form of
 	// file:rel/path/to/file.db?optquery=value&otheroptquery=value
 	u := path.Join(base, viper.GetString("treedb"))
@@ -117,11 +117,11 @@ func (c *Cmd) getTreeDB(rootDir fs.FS, base string, mode string) (serve.TreeDB, 
 	q.Set("mode", mode)
 	dsn := fmt.Sprintf("file:%s?%s", filepath.FromSlash(u), q.Encode())
 	if err := os.MkdirAll(filepath.FromSlash(dir), 0o777); err != nil {
-		return nil, kerrors.WithMsg(err, "Failed to mkdir for db")
+		return nil, nil, kerrors.WithMsg(err, "Failed to mkdir for db")
 	}
 	d := db.NewSQLClient(c.log.Logger.Sublogger("db"), dsn)
 	if err := d.Init(); err != nil {
-		return nil, kerrors.WithMsg(err, "Failed to init sqlite db client")
+		return nil, nil, kerrors.WithMsg(err, "Failed to init sqlite db client")
 	}
 
 	c.log.Info(context.Background(), "Using treedb",
@@ -129,20 +129,20 @@ func (c *Cmd) getTreeDB(rootDir fs.FS, base string, mode string) (serve.TreeDB, 
 		klog.AString("db.file", u),
 	)
 
-	return serve.NewSQLiteTreeDB(d, "content", "encoded", "content_gc"), nil
+	return serve.NewSQLiteTreeDB(d, "content", "encoded", "content_gc"), d, nil
 }
 
-func (c *Cmd) getTree(mode string) (fs.FS, serve.TreeDB, error) {
+func (c *Cmd) getTree(mode string) (fs.FS, serve.TreeDB, *db.SQLClient, error) {
 	rootDir, base := c.getBaseFS()
 	contentDir, err := c.getContentFS(rootDir, base)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	treedb, err := c.getTreeDB(rootDir, base, mode)
+	treedb, d, err := c.getTreeDB(rootDir, base, mode)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return contentDir, treedb, nil
+	return contentDir, treedb, d, nil
 }
 
 // initConfig reads in config file and ENV variables if set.

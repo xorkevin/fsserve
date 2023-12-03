@@ -14,16 +14,16 @@ type (
 func (c *Cmd) getDocCmd() *cobra.Command {
 	docCmd := &cobra.Command{
 		Use:               "doc",
-		Short:             "generate documentation for fsserve",
-		Long:              `generate documentation for fsserve in several formats`,
+		Short:             "Generate documentation for fsserve",
+		Long:              `Generate documentation for fsserve`,
 		DisableAutoGenTag: true,
 	}
 	docCmd.PersistentFlags().StringVarP(&c.docFlags.outputDir, "output", "o", ".", "documentation output path")
 
 	docManCmd := &cobra.Command{
 		Use:               "man",
-		Short:             "generate man page documentation for fsserve",
-		Long:              `generate man page documentation for fsserve`,
+		Short:             "Generate man page documentation for fsserve",
+		Long:              `Generate man page documentation for fsserve`,
 		Run:               c.execDocMan,
 		DisableAutoGenTag: true,
 	}
@@ -31,8 +31,8 @@ func (c *Cmd) getDocCmd() *cobra.Command {
 
 	docMdCmd := &cobra.Command{
 		Use:               "md",
-		Short:             "generate markdown documentation for fsserve",
-		Long:              `generate markdown documentation for fsserve`,
+		Short:             "Generate markdown documentation for fsserve",
+		Long:              `Generate markdown documentation for fsserve`,
 		Run:               c.execDocMd,
 		DisableAutoGenTag: true,
 	}

@@ -19,7 +19,7 @@ A file system http server
 ### SEE ALSO
 
 * [fsserve completion](fsserve_completion.md)	 - Generate the autocompletion script for the specified shell
-* [fsserve doc](fsserve_doc.md)	 - generate documentation for fsserve
+* [fsserve doc](fsserve_doc.md)	 - Generate documentation for fsserve
 * [fsserve serve](fsserve_serve.md)	 - Serves a local file system with an http server
 * [fsserve tree](fsserve_tree.md)	 - Manages the server content tree
 

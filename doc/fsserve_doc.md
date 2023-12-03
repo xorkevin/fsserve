@@ -1,10 +1,10 @@
 ## fsserve doc
 
-generate documentation for fsserve
+Generate documentation for fsserve
 
 ### Synopsis
 
-generate documentation for fsserve in several formats
+Generate documentation for fsserve
 
 ### Options
 
@@ -25,6 +25,6 @@ generate documentation for fsserve in several formats
 ### SEE ALSO
 
 * [fsserve](fsserve.md)	 - A file system http server
-* [fsserve doc man](fsserve_doc_man.md)	 - generate man page documentation for fsserve
-* [fsserve doc md](fsserve_doc_md.md)	 - generate markdown documentation for fsserve
+* [fsserve doc man](fsserve_doc_man.md)	 - Generate man page documentation for fsserve
+* [fsserve doc md](fsserve_doc_md.md)	 - Generate markdown documentation for fsserve
 
