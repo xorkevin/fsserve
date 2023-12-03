@@ -123,7 +123,7 @@ func (c *Cmd) execTreeRm(cmd *cobra.Command, args []string) {
 }
 
 func (c *Cmd) execTreeInit(cmd *cobra.Command, args []string) {
-	blobDir, treedb, err := c.getTree("rw")
+	blobDir, treedb, err := c.getTree("rwc")
 	if err != nil {
 		c.logFatal(err)
 		return

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -110,25 +111,22 @@ func (c *Cmd) getContentFS(rootDir fs.FS, base string) (fs.FS, error) {
 func (c *Cmd) getTreeDB(rootDir fs.FS, base string, mode string) (serve.TreeDB, error) {
 	// url must be in the form of
 	// file:rel/path/to/file.db?optquery=value&otheroptquery=value
-	u, err := url.Parse("file:" + viper.GetString("treedb"))
-	if err != nil {
-		return nil, kerrors.WithMsg(err, "Invalid tree db sqlite dsn")
-	}
-	if u.Opaque == "" {
-		return nil, kerrors.WithMsg(nil, "Tree db sqlite dsn must be relative")
-	}
-	u.Opaque = path.Join(base, u.Opaque)
-	q := u.Query()
+	u := path.Join(base, viper.GetString("treedb"))
+	dir := path.Dir(u)
+	q := url.Values{}
 	q.Set("mode", mode)
-	u.RawQuery = q.Encode()
-	d := db.NewSQLClient(c.log.Logger.Sublogger("db"), u.String())
+	dsn := fmt.Sprintf("file:%s?%s", filepath.FromSlash(u), q.Encode())
+	if err := os.MkdirAll(filepath.FromSlash(dir), 0o777); err != nil {
+		return nil, kerrors.WithMsg(err, "Failed to mkdir for db")
+	}
+	d := db.NewSQLClient(c.log.Logger.Sublogger("db"), dsn)
 	if err := d.Init(); err != nil {
 		return nil, kerrors.WithMsg(err, "Failed to init sqlite db client")
 	}
 
 	c.log.Info(context.Background(), "Using treedb",
 		klog.AString("db.engine", "sqlite"),
-		klog.AString("db.file", u.Opaque),
+		klog.AString("db.file", u),
 	)
 
 	return serve.NewSQLiteTreeDB(d, "content", "encoded", "content_gc"), nil
