@@ -13,8 +13,8 @@ fsserve tree sync [flags]
 ### Options
 
 ```
-  -h, --help       help for sync
-      --rm-after   removes unsynced content
+  -h, --help   help for sync
+      --rm     removes unsynced content
 ```
 
 ### Options inherited from parent commands
