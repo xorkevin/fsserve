@@ -13,12 +13,12 @@ import (
 
 type (
 	treeFlags struct {
-		ctype   string
-		src     string
-		enc     []string
-		dst     string
-		rmAfter bool
-		full    bool
+		ctype string
+		src   string
+		enc   []string
+		dst   string
+		prune bool
+		full  bool
 	}
 )
 
@@ -69,7 +69,7 @@ func (c *Cmd) getTreeCmd() *cobra.Command {
 		Run:               c.execTreeSync,
 		DisableAutoGenTag: true,
 	}
-	syncCmd.PersistentFlags().BoolVar(&c.treeFlags.rmAfter, "rm", false, "removes unsynced content")
+	syncCmd.PersistentFlags().BoolVar(&c.treeFlags.prune, "prune", false, "removes unsynced content")
 	treeCmd.AddCommand(syncCmd)
 
 	gcCmd := &cobra.Command{
@@ -175,7 +175,7 @@ func (c *Cmd) execTreeSync(cmd *cobra.Command, args []string) {
 			}
 		}()
 		tree := serve.NewTree(c.log.Logger, treedb, blobDir)
-		return tree.SyncContent(context.Background(), cfg, c.treeFlags.rmAfter)
+		return tree.SyncContent(context.Background(), cfg, c.treeFlags.prune)
 	}(); err != nil {
 		c.logFatal(err)
 		return
