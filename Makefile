@@ -3,7 +3,7 @@
 all: install ## Default
 
 install: ## Install fsserve
-	go install -trimpath -ldflags "-w -s" .
+	CGO_ENABLED=0 go install -trimpath -ldflags "-w -s" .
 
 ## TESTS
 
