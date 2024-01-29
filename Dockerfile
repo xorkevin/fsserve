@@ -11,7 +11,7 @@ RUN \
   --mount=type=cache,id=gobuildcache,sharing=locked,target=/root/.cache/go-build \
   GOPROXY=off go build -v -trimpath -ldflags "-w -s" -o /usr/local/bin/fsserve .
 
-FROM cgr.dev/chainguard/static:latest-glibc
+FROM cgr.dev/chainguard/glibc-dynamic:latest
 LABEL org.opencontainers.image.authors="Kevin Wang <kevin@xorkevin.com>"
 COPY --link --from=builder /usr/local/bin/fsserve /usr/local/bin/fsserve
 EXPOSE 8080
