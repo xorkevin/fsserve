@@ -85,12 +85,10 @@ func TestServer(t *testing.T) {
 
 	baseDir := path.Join(rootDir, "base")
 	treeDBFile := path.Join(baseDir, "tree.db")
-	treeDBDir := path.Join(baseDir, "tree")
 	assert.NoError(os.MkdirAll(filepath.Dir(filepath.FromSlash(treeDBFile)), 0o777))
-	assert.NoError(os.MkdirAll(filepath.FromSlash(treeDBDir), 0o777))
-	rwDB := db.NewSQLClient(klog.Discard{}, "file:"+filepath.FromSlash(treeDBFile)+"?mode=rwc")
+	rwDB := db.NewSQLClient(klog.Discard{}, "file:"+filepath.FromSlash(treeDBFile)+"?mode=rwc&_busy_timeout=5000&_journal_mode=WAL")
 	assert.NoError(rwDB.Init())
-	rdb := db.NewSQLClient(klog.Discard{}, "file:"+filepath.FromSlash(treeDBFile)+"?mode=ro")
+	rdb := db.NewSQLClient(klog.Discard{}, "file:"+filepath.FromSlash(treeDBFile)+"?mode=ro&_busy_timeout=5000&_journal_mode=WAL")
 	assert.NoError(rdb.Init())
 
 	for _, tc := range []struct {

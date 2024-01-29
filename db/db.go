@@ -5,8 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
-	"modernc.org/sqlite"
-	sqlite3 "modernc.org/sqlite/lib"
+	"github.com/mattn/go-sqlite3"
 	"xorkevin.dev/forge/model/sqldb"
 	"xorkevin.dev/kerrors"
 	"xorkevin.dev/klog"
@@ -72,10 +71,10 @@ func wrapDBErr(err error, fallbackmsg string) error {
 	if errors.Is(err, sql.ErrNoRows) {
 		return errWithKind(err, ErrNotFound, "Not found")
 	}
-	var perr *sqlite.Error
+	var perr sqlite3.Error
 	if errors.As(err, &perr) {
-		switch perr.Code() {
-		case sqlite3.SQLITE_CONSTRAINT_UNIQUE:
+		switch perr.ExtendedCode {
+		case sqlite3.ErrConstraintUnique:
 			return errWithKind(err, ErrUnique, "Unique constraint violated")
 		}
 	}
@@ -90,7 +89,7 @@ func NewSQLClient(log klog.Logger, dsn string) *SQLClient {
 }
 
 func (s *SQLClient) Init() error {
-	client, err := sql.Open("sqlite", s.dsn)
+	client, err := sql.Open("sqlite3", s.dsn)
 	if err != nil {
 		return kerrors.WithMsg(err, "Failed creating sqlite db client")
 	}

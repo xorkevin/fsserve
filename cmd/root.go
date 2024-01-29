@@ -115,6 +115,8 @@ func (c *Cmd) getTreeDB(rootDir fs.FS, base string, mode string) (serve.TreeDB, 
 	dir := path.Dir(u)
 	q := url.Values{}
 	q.Set("mode", mode)
+	q.Set("_busy_timeout", "5000")
+	q.Set("_journal_mode", "WAL")
 	dsn := fmt.Sprintf("file:%s?%s", filepath.FromSlash(u), q.Encode())
 	if err := os.MkdirAll(filepath.FromSlash(dir), 0o777); err != nil {
 		return nil, nil, kerrors.WithMsg(err, "Failed to mkdir for db")

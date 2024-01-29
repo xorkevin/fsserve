@@ -30,7 +30,7 @@ func (t *ctModelTable) Setup(ctx context.Context, d sqldb.Executor) error {
 }
 
 func (t *ctModelTable) Insert(ctx context.Context, d sqldb.Executor, m *Model) error {
-	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (name, hash, contenttype) VALUES ($1, $2, $3);", m.Name, m.Hash, m.ContentType)
+	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (name, hash, contenttype) VALUES (?1, ?2, ?3);", m.Name, m.Hash, m.ContentType)
 	if err != nil {
 		return err
 	}
@@ -46,7 +46,7 @@ func (t *ctModelTable) InsertBulk(ctx context.Context, d sqldb.Executor, models 
 	args := make([]interface{}, 0, len(models)*3)
 	for c, m := range models {
 		n := c * 3
-		placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d)", n+1, n+2, n+3))
+		placeholders = append(placeholders, fmt.Sprintf("(?%d, ?%d, ?%d)", n+1, n+2, n+3))
 		args = append(args, m.Name, m.Hash, m.ContentType)
 	}
 	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (name, hash, contenttype) VALUES "+strings.Join(placeholders, ", ")+conflictSQL+";", args...)
@@ -58,20 +58,20 @@ func (t *ctModelTable) InsertBulk(ctx context.Context, d sqldb.Executor, models 
 
 func (t *ctModelTable) GetModelByName(ctx context.Context, d sqldb.Executor, name string) (*Model, error) {
 	m := &Model{}
-	if err := d.QueryRowContext(ctx, "SELECT name, hash, contenttype FROM "+t.TableName+" WHERE name = $1;", name).Scan(&m.Name, &m.Hash, &m.ContentType); err != nil {
+	if err := d.QueryRowContext(ctx, "SELECT name, hash, contenttype FROM "+t.TableName+" WHERE name = ?1;", name).Scan(&m.Name, &m.Hash, &m.ContentType); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
 func (t *ctModelTable) DelByName(ctx context.Context, d sqldb.Executor, name string) error {
-	_, err := d.ExecContext(ctx, "DELETE FROM "+t.TableName+" WHERE name = $1;", name)
+	_, err := d.ExecContext(ctx, "DELETE FROM "+t.TableName+" WHERE name = ?1;", name)
 	return err
 }
 
 func (t *ctModelTable) GetModelAll(ctx context.Context, d sqldb.Executor, limit, offset int) (_ []Model, retErr error) {
 	res := make([]Model, 0, limit)
-	rows, err := d.QueryContext(ctx, "SELECT name, hash, contenttype FROM "+t.TableName+" ORDER BY name LIMIT $1 OFFSET $2;", limit, offset)
+	rows, err := d.QueryContext(ctx, "SELECT name, hash, contenttype FROM "+t.TableName+" ORDER BY name LIMIT ?1 OFFSET ?2;", limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func (t *ctModelTable) GetModelAll(ctx context.Context, d sqldb.Executor, limit,
 
 func (t *ctModelTable) GetModelGtName(ctx context.Context, d sqldb.Executor, name string, limit, offset int) (_ []Model, retErr error) {
 	res := make([]Model, 0, limit)
-	rows, err := d.QueryContext(ctx, "SELECT name, hash, contenttype FROM "+t.TableName+" WHERE name > $3 ORDER BY name LIMIT $1 OFFSET $2;", limit, offset, name)
+	rows, err := d.QueryContext(ctx, "SELECT name, hash, contenttype FROM "+t.TableName+" WHERE name > ?3 ORDER BY name LIMIT ?1 OFFSET ?2;", limit, offset, name)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +118,7 @@ func (t *ctModelTable) GetModelGtName(ctx context.Context, d sqldb.Executor, nam
 }
 
 func (t *ctModelTable) UpdctPropsByName(ctx context.Context, d sqldb.Executor, m *ctProps, name string) error {
-	_, err := d.ExecContext(ctx, "UPDATE "+t.TableName+" SET (hash, contenttype) = ($1, $2) WHERE name = $3;", m.Hash, m.ContentType, name)
+	_, err := d.ExecContext(ctx, "UPDATE "+t.TableName+" SET (hash, contenttype) = (?1, ?2) WHERE name = ?3;", m.Hash, m.ContentType, name)
 	if err != nil {
 		return err
 	}
@@ -144,7 +144,7 @@ func (t *encModelTable) Setup(ctx context.Context, d sqldb.Executor) error {
 }
 
 func (t *encModelTable) Insert(ctx context.Context, d sqldb.Executor, m *Encoded) error {
-	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (name, code, ord, hash) VALUES ($1, $2, $3, $4);", m.Name, m.Code, m.Order, m.Hash)
+	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (name, code, ord, hash) VALUES (?1, ?2, ?3, ?4);", m.Name, m.Code, m.Order, m.Hash)
 	if err != nil {
 		return err
 	}
@@ -160,7 +160,7 @@ func (t *encModelTable) InsertBulk(ctx context.Context, d sqldb.Executor, models
 	args := make([]interface{}, 0, len(models)*4)
 	for c, m := range models {
 		n := c * 4
-		placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d)", n+1, n+2, n+3, n+4))
+		placeholders = append(placeholders, fmt.Sprintf("(?%d, ?%d, ?%d, ?%d)", n+1, n+2, n+3, n+4))
 		args = append(args, m.Name, m.Code, m.Order, m.Hash)
 	}
 	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (name, code, ord, hash) VALUES "+strings.Join(placeholders, ", ")+conflictSQL+";", args...)
@@ -171,13 +171,13 @@ func (t *encModelTable) InsertBulk(ctx context.Context, d sqldb.Executor, models
 }
 
 func (t *encModelTable) DelByName(ctx context.Context, d sqldb.Executor, name string) error {
-	_, err := d.ExecContext(ctx, "DELETE FROM "+t.TableName+" WHERE name = $1;", name)
+	_, err := d.ExecContext(ctx, "DELETE FROM "+t.TableName+" WHERE name = ?1;", name)
 	return err
 }
 
 func (t *encModelTable) GetEncodedByName(ctx context.Context, d sqldb.Executor, name string, limit, offset int) (_ []Encoded, retErr error) {
 	res := make([]Encoded, 0, limit)
-	rows, err := d.QueryContext(ctx, "SELECT name, code, ord, hash FROM "+t.TableName+" WHERE name = $3 ORDER BY ord LIMIT $1 OFFSET $2;", limit, offset, name)
+	rows, err := d.QueryContext(ctx, "SELECT name, code, ord, hash FROM "+t.TableName+" WHERE name = ?3 ORDER BY ord LIMIT ?1 OFFSET ?2;", limit, offset, name)
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +214,7 @@ func (t *gcModelTable) Setup(ctx context.Context, d sqldb.Executor) error {
 }
 
 func (t *gcModelTable) Insert(ctx context.Context, d sqldb.Executor, m *GCCandidate) error {
-	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (hash) VALUES ($1);", m.Hash)
+	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (hash) VALUES (?1);", m.Hash)
 	if err != nil {
 		return err
 	}
@@ -230,7 +230,7 @@ func (t *gcModelTable) InsertBulk(ctx context.Context, d sqldb.Executor, models 
 	args := make([]interface{}, 0, len(models)*1)
 	for c, m := range models {
 		n := c * 1
-		placeholders = append(placeholders, fmt.Sprintf("($%d)", n+1))
+		placeholders = append(placeholders, fmt.Sprintf("(?%d)", n+1))
 		args = append(args, m.Hash)
 	}
 	_, err := d.ExecContext(ctx, "INSERT INTO "+t.TableName+" (hash) VALUES "+strings.Join(placeholders, ", ")+conflictSQL+";", args...)
@@ -242,7 +242,7 @@ func (t *gcModelTable) InsertBulk(ctx context.Context, d sqldb.Executor, models 
 
 func (t *gcModelTable) GetGCCandidateAll(ctx context.Context, d sqldb.Executor, limit, offset int) (_ []GCCandidate, retErr error) {
 	res := make([]GCCandidate, 0, limit)
-	rows, err := d.QueryContext(ctx, "SELECT hash FROM "+t.TableName+" ORDER BY hash LIMIT $1 OFFSET $2;", limit, offset)
+	rows, err := d.QueryContext(ctx, "SELECT hash FROM "+t.TableName+" ORDER BY hash LIMIT ?1 OFFSET ?2;", limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -265,6 +265,6 @@ func (t *gcModelTable) GetGCCandidateAll(ctx context.Context, d sqldb.Executor, 
 }
 
 func (t *gcModelTable) DelByHash(ctx context.Context, d sqldb.Executor, hash string) error {
-	_, err := d.ExecContext(ctx, "DELETE FROM "+t.TableName+" WHERE hash = $1;", hash)
+	_, err := d.ExecContext(ctx, "DELETE FROM "+t.TableName+" WHERE hash = ?1;", hash)
 	return err
 }
