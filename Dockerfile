@@ -16,5 +16,5 @@ LABEL org.opencontainers.image.authors="Kevin Wang <kevin@xorkevin.com>"
 COPY --link --from=builder /usr/local/bin/fsserve /usr/local/bin/fsserve
 EXPOSE 8080
 WORKDIR /home/fsserve
-ENTRYPOINT ["/usr/local/bin/fsserve"]
-CMD ["serve", "--config", "/home/fsserve/config/.fsserve.json", "-p", "8080", "-b", "/home/fsserve/base"]
+ENTRYPOINT ["/usr/local/bin/fsserve", "--config", "/home/fsserve/config/.fsserve.json", "-b", "/home/fsserve/base"]
+CMD ["serve", "-p", "8080"]
