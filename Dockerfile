@@ -12,7 +12,7 @@ RUN \
   --mount=type=bind,source=.,target=. \
   GOPROXY=off go build -v -trimpath -ldflags "-w -s" -o /usr/local/bin/fsserve .
 
-FROM gcr.io/distroless/base-debian12:latest
+FROM debian:12.4-slim
 LABEL org.opencontainers.image.authors="Kevin Wang <kevin@xorkevin.com>"
 COPY --link --from=builder /usr/local/bin/fsserve /usr/local/bin/fsserve
 EXPOSE 8080
