@@ -290,7 +290,6 @@ func (s *Server) Mount(routes []Route) error {
 	s.mux = http.NewServeMux()
 	contentSys := http.FS(s.contentDir)
 	for _, i := range routes {
-		i := i
 		s.log.Info(context.Background(), "Handle route",
 			klog.AString("route.prefix", i.Prefix),
 			klog.AString("route.fspath", i.Path),

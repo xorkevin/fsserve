@@ -112,7 +112,6 @@ func TestServer(t *testing.T) {
 			),
 		},
 	} {
-		tc := tc
 		t.Run(tc.Name, func(t *testing.T) {
 			t.Parallel()
 
@@ -336,7 +335,6 @@ func TestServer(t *testing.T) {
 					Status: http.StatusNotFound,
 				},
 			} {
-				tc := tc
 				t.Run(tc.Name, func(t *testing.T) {
 					t.Parallel()
 
