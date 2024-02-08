@@ -18,6 +18,12 @@ RUN \
 FROM debian:12.4-slim
 ARG appname
 LABEL org.opencontainers.image.authors="Kevin Wang <kevin@xorkevin.com>"
+RUN \
+  --mount=type=cache,id=deb12aptpkgcache,sharing=locked,target=/var/cache/apt \
+  --mount=type=cache,id=deb12aptlistscache,sharing=locked,target=/var/lib/apt/lists \
+  rm /etc/apt/apt.conf.d/docker-clean && \
+  apt-get update && \
+  apt-get install -y ca-certificates
 COPY --link --from=builder "/usr/local/bin/$appname" "/usr/local/bin/$appname"
 EXPOSE 8080
 WORKDIR "/home/$appname"
