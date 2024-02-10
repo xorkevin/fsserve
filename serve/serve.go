@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"mime"
 	"net/http"
@@ -65,14 +66,14 @@ type (
 	serverSubdir struct {
 		log        *klog.LevelLogger
 		db         TreeDB
-		contentSys http.FileSystem
+		contentDir fs.FS
 		route      Route
 	}
 
 	serverFile struct {
 		log        *klog.LevelLogger
 		db         TreeDB
-		contentSys http.FileSystem
+		contentDir fs.FS
 		route      Route
 	}
 
@@ -214,7 +215,7 @@ func writeResHeaders(w http.ResponseWriter, reqHeaders http.Header, cfg contentF
 func sendFile(
 	ctx context.Context,
 	log *klog.LevelLogger,
-	contentSys http.FileSystem,
+	contentSys fs.FS,
 	w http.ResponseWriter,
 	r *http.Request,
 	cfg contentFile,
@@ -230,6 +231,11 @@ func sendFile(
 			log.Err(ctx, kerrors.WithMsg(err, fmt.Sprintf("Failed to close open file %s", cfg.hash)))
 		}
 	}()
+	rsf, ok := f.(io.ReadSeeker)
+	if !ok {
+		writeError(ctx, log, w, kerrors.WithMsg(nil, fmt.Sprintf("FS impl does not support seek %s", cfg.hash)))
+		return
+	}
 	stat, err := f.Stat()
 	if err != nil {
 		writeError(ctx, log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", cfg.hash)))
@@ -239,13 +245,13 @@ func sendFile(
 		writeError(ctx, log, w, kerrors.WithMsg(nil, fmt.Sprintf("File %s is a directory", cfg.hash)))
 		return
 	}
-	http.ServeContent(w, r, cfg.basename, stat.ModTime(), f)
+	http.ServeContent(w, r, cfg.basename, stat.ModTime(), rsf)
 }
 
 func serveFile(
 	log *klog.LevelLogger,
 	d TreeDB,
-	contentSys http.FileSystem,
+	contentSys fs.FS,
 	w http.ResponseWriter,
 	r *http.Request,
 	name string,
@@ -267,12 +273,12 @@ func serveFile(
 }
 
 func (s *serverSubdir) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	serveFile(s.log, s.db, s.contentSys, w, r, path.Join(s.route.Path, r.URL.Path), s.route.CacheControl)
+	serveFile(s.log, s.db, s.contentDir, w, r, path.Join(s.route.Path, r.URL.Path), s.route.CacheControl)
 }
 
 func (s *serverFile) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// may not use url path here to prevent unwanted file access
-	serveFile(s.log, s.db, s.contentSys, w, r, s.route.Path, s.route.CacheControl)
+	serveFile(s.log, s.db, s.contentDir, w, r, s.route.Path, s.route.CacheControl)
 }
 
 func NewServer(l klog.Logger, treedb TreeDB, contentDir fs.FS, config Config) *Server {
@@ -288,7 +294,6 @@ func NewServer(l klog.Logger, treedb TreeDB, contentDir fs.FS, config Config) *S
 
 func (s *Server) Mount(routes []Route) error {
 	s.mux = http.NewServeMux()
-	contentSys := http.FS(s.contentDir)
 	for _, i := range routes {
 		s.log.Info(context.Background(), "Handle route",
 			klog.AString("route.prefix", i.Prefix),
@@ -300,14 +305,14 @@ func (s *Server) Mount(routes []Route) error {
 			s.mux.Handle(i.Prefix, http.StripPrefix(i.Prefix, &serverSubdir{
 				log:        log,
 				db:         s.db,
-				contentSys: contentSys,
+				contentDir: s.contentDir,
 				route:      i,
 			}))
 		} else {
 			s.mux.Handle(i.Prefix, &serverFile{
 				log:        log,
 				db:         s.db,
-				contentSys: contentSys,
+				contentDir: s.contentDir,
 				route:      i,
 			})
 		}
