@@ -219,7 +219,6 @@ func sendFile(
 	w http.ResponseWriter,
 	r *http.Request,
 	cfg contentFile,
-	cachecontrol string,
 ) {
 	f, err := contentSys.Open(cfg.hash)
 	if err != nil {
@@ -269,7 +268,7 @@ func serveFile(
 		return
 	}
 
-	sendFile(ctx, log, contentSys, w, r, *cfg, cachecontrol)
+	sendFile(ctx, log, contentSys, w, r, *cfg)
 }
 
 func (s *serverSubdir) ServeHTTP(w http.ResponseWriter, r *http.Request) {
