@@ -64,7 +64,7 @@ func (e errUnique) Error() string {
 }
 
 func errWithKind(err error, kind error, msg string) error {
-	return kerrors.New(kerrors.OptInner(err), kerrors.OptKind(ErrNotFound), kerrors.OptMsg("Not found"), kerrors.OptSkip(2))
+	return kerrors.New(kerrors.OptInner(err), kerrors.OptKind(kind), kerrors.OptMsg(msg), kerrors.OptSkip(2))
 }
 
 func wrapDBErr(err error, fallbackmsg string) error {
