@@ -12,7 +12,6 @@ import (
 	"mime"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -41,12 +40,11 @@ func AddMimeTypes(mimeTypes []MimeType) error {
 
 type (
 	Server struct {
-		log        *klog.LevelLogger
-		db         TreeDB
-		contentDir fs.FS
-		mux        *http.ServeMux
-		config     Config
-		reqcount   *atomic.Uint32
+		log      *klog.LevelLogger
+		dir      fs.FS
+		mux      *http.ServeMux
+		config   Config
+		reqcount *atomic.Uint32
 	}
 
 	Config struct {
@@ -64,29 +62,35 @@ type (
 	}
 
 	serverSubdir struct {
-		log        *klog.LevelLogger
-		db         TreeDB
-		contentDir fs.FS
-		route      Route
+		log   *klog.LevelLogger
+		dir   fs.FS
+		route Route
 	}
 
 	serverFile struct {
-		log        *klog.LevelLogger
-		db         TreeDB
-		contentDir fs.FS
-		route      Route
+		log   *klog.LevelLogger
+		dir   fs.FS
+		route Route
 	}
 
 	Route struct {
-		Prefix       string `mapstructure:"prefix"`
-		Dir          bool   `mapstructure:"dir"`
-		Path         string `mapstructure:"path"`
-		CacheControl string `mapstructure:"cachecontrol"`
+		Prefix             string     `mapstructure:"prefix"`
+		Dir                bool       `mapstructure:"dir"`
+		Path               string     `mapstructure:"path"`
+		DefaultContentType string     `mapstructure:"default_content_type"`
+		Encodings          []Encoding `mapstructure:"encodings"`
+		CacheControl       string     `mapstructure:"cachecontrol"`
 	}
 
-	contentFile struct {
+	Encoding struct {
+		Code string `mapstructure:"code"`
+		Ext  string `mapstructure:"ext"`
+	}
+
+	fileConfig struct {
+		path     string
 		basename string
-		hash     string
+		stat     fs.FileInfo
 		ctype    string
 		encoding string
 	}
@@ -128,7 +132,7 @@ func writeError(ctx context.Context, log *klog.LevelLogger, w http.ResponseWrite
 	http.Error(w, http.StatusText(status), status)
 }
 
-func detectEncoding(cfg ContentConfig, reqHeaders http.Header) (string, string) {
+func detectEncoding(dir fs.FS, encodings []Encoding, reqHeaders http.Header, name string) (string, fs.FileInfo, string, error) {
 	encodingsSet := map[string]struct{}{}
 	if accept := strings.TrimSpace(reqHeaders.Get(headerAcceptEncoding)); accept != "" {
 		for _, directive := range strings.Split(accept, ",") {
@@ -137,73 +141,106 @@ func detectEncoding(cfg ContentConfig, reqHeaders http.Header) (string, string) 
 			encodingsSet[enc] = struct{}{}
 		}
 	}
-	for _, i := range cfg.Encoded {
+	for _, i := range encodings {
 		_, ok := encodingsSet[i.Code]
 		if !ok {
 			continue
 		}
-		return i.Hash, i.Code
+		fp := name + i.Ext
+		stat, err := fs.Stat(dir, fp)
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				return "", nil, "", kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", fp))
+			}
+			continue
+		}
+		if stat.IsDir() {
+			continue
+		}
+		return fp, stat, i.Code, nil
 	}
-	return cfg.Hash, ""
+	stat, err := fs.Stat(dir, name)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil, "", kerrors.WithKind(err, ErrNotFound, fmt.Sprintf("File not found: %s", name))
+		}
+		return "", nil, "", kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", name))
+	}
+	if stat.IsDir() {
+		return "", nil, "", kerrors.WithMsg(nil, fmt.Sprintf("File %s is a directory", name))
+	}
+	return name, stat, "", nil
 }
 
 const (
 	defaultContentType = "application/octet-stream"
 )
 
-func detectContentType(cfg ContentConfig, name string) string {
-	ctype := cfg.ContentType
+func detectContentType(name string, fallbackContentType string) string {
+	// need to detect content type on original path since mime.TypeByExtension
+	// does not handle .gz, .br, etc.
+	ctype := mime.TypeByExtension(path.Ext(name))
 	if ctype != "" {
 		return ctype
 	}
-	// need to detect content type on original path since mime.TypeByExtension
-	// does not handle .gz, .br, etc.
-	ctype = mime.TypeByExtension(path.Ext(name))
-	if ctype != "" {
-		return ctype
+	if fallbackContentType != "" {
+		return fallbackContentType
 	}
 	return defaultContentType
 }
 
-func getContentConfig(
+func getFileConfig(
 	ctx context.Context,
-	d TreeDB,
+	dir fs.FS,
 	reqHeaders http.Header,
 	name string,
-) (*contentFile, error) {
-	cfg, err := d.Get(ctx, name)
+	route Route,
+) (*fileConfig, error) {
+	ctype := detectContentType(name, route.DefaultContentType)
+
+	p, stat, encoding, err := detectEncoding(dir, route.Encodings, reqHeaders, name)
 	if err != nil {
-		return nil, kerrors.WithMsg(err, fmt.Sprintf("Failed to get content config for %s", name))
+		return nil, err
 	}
 
-	hash, encoding := detectEncoding(*cfg, reqHeaders)
-	ctype := detectContentType(*cfg, name)
-
-	return &contentFile{
+	return &fileConfig{
+		path:     p,
 		basename: path.Base(name),
-		hash:     hash,
+		stat:     stat,
 		ctype:    ctype,
 		encoding: encoding,
 	}, nil
 }
 
-func writeResHeaders(w http.ResponseWriter, reqHeaders http.Header, cfg contentFile, cachecontrol string) bool {
+func calcWeakETag(stat fs.FileInfo) string {
+	var etagbytes [16]byte
+	binary.BigEndian.PutUint64(etagbytes[:8], uint64(stat.ModTime().UnixMilli()))
+	binary.BigEndian.PutUint64(etagbytes[8:], uint64(stat.Size()))
+	return `W/"` + base64HexEncoding.EncodeToString(etagbytes[:]) + `"`
+}
+
+func writeResHeaders(w http.ResponseWriter, reqHeaders http.Header, cfg fileConfig, cachecontrol string) bool {
 	// According to RFC7232 section 4.1, server must send same Cache-Control,
 	// Content-Location, Date, ETag, Expires, and Vary headers for 304 response
 	// as 200 response.
 	w.Header().Add(headerVary, headerAcceptEncoding)
 
 	if cachecontrol != "" {
-		// strong etag since content is addressed by hash
-		etag := `"` + url.QueryEscape(cfg.hash) + `"`
+		// weak etag does not allow file serving by range query
+		weakETag := calcWeakETag(cfg.stat)
 
 		w.Header().Set(headerCacheControl, cachecontrol)
 		// ETag also used by [net/http.ServeContent] for byte range requests
-		w.Header().Set(headerETag, etag)
+		w.Header().Set(headerETag, weakETag)
 
-		if v := reqHeaders.Get(headerIfNoneMatch); v == etag {
-			w.WriteHeader(http.StatusNotModified)
-			return true
+		if match := strings.TrimSpace(reqHeaders.Get(headerIfNoneMatch)); match != "" {
+			for _, tag := range strings.Split(match, ",") {
+				tag = strings.TrimSpace(tag)
+				if tag == weakETag {
+					w.WriteHeader(http.StatusNotModified)
+					return true
+				}
+			}
 		}
 	}
 
@@ -215,79 +252,83 @@ func writeResHeaders(w http.ResponseWriter, reqHeaders http.Header, cfg contentF
 func sendFile(
 	ctx context.Context,
 	log *klog.LevelLogger,
-	contentSys fs.FS,
+	dir fs.FS,
 	w http.ResponseWriter,
 	r *http.Request,
-	cfg contentFile,
+	cfg fileConfig,
 ) {
-	f, err := contentSys.Open(cfg.hash)
+	f, err := dir.Open(cfg.path)
 	if err != nil {
-		writeError(ctx, log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to open file %s", cfg.hash)))
+		writeError(ctx, log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to open file %s", cfg.path)))
 		return
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			log.Err(ctx, kerrors.WithMsg(err, fmt.Sprintf("Failed to close open file %s", cfg.hash)))
+			log.Err(ctx, kerrors.WithMsg(err, fmt.Sprintf("Failed to close open file %s", cfg.path)))
 		}
 	}()
 	rsf, ok := f.(io.ReadSeeker)
 	if !ok {
-		writeError(ctx, log, w, kerrors.WithMsg(nil, fmt.Sprintf("FS impl does not support seek %s", cfg.hash)))
+		writeError(ctx, log, w, kerrors.WithMsg(nil, fmt.Sprintf("FS impl does not support seek for file %s", cfg.path)))
 		return
 	}
 	stat, err := f.Stat()
 	if err != nil {
-		writeError(ctx, log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", cfg.hash)))
+		writeError(ctx, log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", cfg.path)))
 		return
 	}
 	if stat.IsDir() {
-		writeError(ctx, log, w, kerrors.WithMsg(nil, fmt.Sprintf("File %s is a directory", cfg.hash)))
+		writeError(ctx, log, w, kerrors.WithMsg(nil, fmt.Sprintf("File %s is a directory", cfg.path)))
 		return
+	}
+	if etag := w.Header().Get(headerETag); strings.HasPrefix(etag, `W/`) {
+		if calcWeakETag(stat) != etag {
+			writeError(ctx, log, w, kerrors.WithMsg(nil, fmt.Sprintf("File changed while handling %s", cfg.path)))
+			return
+		}
 	}
 	http.ServeContent(w, r, cfg.basename, stat.ModTime(), rsf)
 }
 
 func serveFile(
 	log *klog.LevelLogger,
-	d TreeDB,
-	contentSys fs.FS,
+	dir fs.FS,
 	w http.ResponseWriter,
 	r *http.Request,
 	name string,
-	cachecontrol string,
+	route Route,
 ) {
 	ctx := r.Context()
 
-	cfg, err := getContentConfig(ctx, d, r.Header, name)
+	cfg, err := getFileConfig(ctx, dir, r.Header, name, route)
 	if err != nil {
 		writeError(ctx, log, w, err)
 		return
 	}
 
-	if writeResHeaders(w, r.Header, *cfg, cachecontrol) {
+	if writeResHeaders(w, r.Header, *cfg, route.CacheControl) {
 		return
 	}
 
-	sendFile(ctx, log, contentSys, w, r, *cfg)
+	sendFile(ctx, log, dir, w, r, *cfg)
 }
 
 func (s *serverSubdir) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	serveFile(s.log, s.db, s.contentDir, w, r, path.Join(s.route.Path, r.URL.Path), s.route.CacheControl)
+	serveFile(s.log, s.dir, w, r, r.URL.Path, s.route)
 }
 
 func (s *serverFile) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// may not use url path here to prevent unwanted file access
-	serveFile(s.log, s.db, s.contentDir, w, r, s.route.Path, s.route.CacheControl)
+	serveFile(s.log, s.dir, w, r, s.route.Path, s.route)
 }
 
-func NewServer(l klog.Logger, treedb TreeDB, contentDir fs.FS, config Config) *Server {
+func NewServer(l klog.Logger, dir fs.FS, config Config) *Server {
 	return &Server{
-		log:        klog.NewLevelLogger(l),
-		db:         treedb,
-		contentDir: contentDir,
-		mux:        http.NewServeMux(),
-		config:     config,
-		reqcount:   &atomic.Uint32{},
+		log:      klog.NewLevelLogger(l),
+		dir:      dir,
+		mux:      http.NewServeMux(),
+		config:   config,
+		reqcount: &atomic.Uint32{},
 	}
 }
 
@@ -301,18 +342,20 @@ func (s *Server) Mount(routes []Route) error {
 		)
 		log := klog.NewLevelLogger(s.log.Logger.Sublogger("router", klog.AString("router.path", i.Prefix)))
 		if i.Dir {
+			dir, err := fs.Sub(s.dir, i.Path)
+			if err != nil {
+				return kerrors.WithMsg(err, fmt.Sprintf("Failed to open subdir %s", i.Path))
+			}
 			s.mux.Handle(i.Prefix, http.StripPrefix(i.Prefix, &serverSubdir{
-				log:        log,
-				db:         s.db,
-				contentDir: s.contentDir,
-				route:      i,
+				log:   log,
+				dir:   dir,
+				route: i,
 			}))
 		} else {
 			s.mux.Handle(i.Prefix, &serverFile{
-				log:        log,
-				db:         s.db,
-				contentDir: s.contentDir,
-				route:      i,
+				log:   log,
+				dir:   s.dir,
+				route: i,
 			})
 		}
 	}
