@@ -22,6 +22,26 @@ import (
 	"xorkevin.dev/klog"
 )
 
+var (
+	// ErrNotFound is returned when a file is not found
+	ErrNotFound errNotFound
+	// ErrInvalidReq is returned when a file request is invalid
+	ErrInvalidReq errInvalidReq
+)
+
+type (
+	errNotFound   struct{}
+	errInvalidReq struct{}
+)
+
+func (e errNotFound) Error() string {
+	return "File not found"
+}
+
+func (e errInvalidReq) Error() string {
+	return "Invalid file request"
+}
+
 type (
 	MimeType struct {
 		Ext         string `mapstructure:"ext" json:"ext"`
@@ -88,11 +108,12 @@ type (
 	}
 
 	fileConfig struct {
-		path     string
-		basename string
-		stat     fs.FileInfo
-		ctype    string
-		encoding string
+		path       string
+		basename   string
+		ctype      string
+		encoding   string
+		weakETag   string
+		strongETag string
 	}
 )
 
@@ -110,7 +131,10 @@ func getErrorStatus(err error) int {
 	if errors.Is(err, ErrNotFound) {
 		return http.StatusNotFound
 	}
-	return http.StatusBadRequest
+	if errors.Is(err, ErrInvalidReq) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }
 
 func writeError(ctx context.Context, log *klog.LevelLogger, w http.ResponseWriter, err error) {
@@ -167,7 +191,7 @@ func detectEncoding(dir fs.FS, encodings []Encoding, reqHeaders http.Header, nam
 		return "", nil, "", kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", name))
 	}
 	if stat.IsDir() {
-		return "", nil, "", kerrors.WithMsg(nil, fmt.Sprintf("File %s is a directory", name))
+		return "", nil, "", kerrors.WithKind(nil, ErrInvalidReq, fmt.Sprintf("File %s is a directory", name))
 	}
 	return name, stat, "", nil
 }
@@ -189,8 +213,17 @@ func detectContentType(name string, fallbackContentType string) string {
 	return defaultContentType
 }
 
+func calcWeakETag(stat fs.FileInfo) string {
+	if stat.ModTime().IsZero() {
+		return ""
+	}
+	var etagbytes [16]byte
+	binary.BigEndian.PutUint64(etagbytes[:8], uint64(stat.ModTime().UnixMilli()))
+	binary.BigEndian.PutUint64(etagbytes[8:], uint64(stat.Size()))
+	return `W/"` + base64HexEncoding.EncodeToString(etagbytes[:]) + `"`
+}
+
 func getFileConfig(
-	ctx context.Context,
 	dir fs.FS,
 	reqHeaders http.Header,
 	name string,
@@ -204,19 +237,13 @@ func getFileConfig(
 	}
 
 	return &fileConfig{
-		path:     p,
-		basename: path.Base(name),
-		stat:     stat,
-		ctype:    ctype,
-		encoding: encoding,
+		path:       p,
+		basename:   path.Base(name),
+		ctype:      ctype,
+		encoding:   encoding,
+		weakETag:   calcWeakETag(stat),
+		strongETag: "",
 	}, nil
-}
-
-func calcWeakETag(stat fs.FileInfo) string {
-	var etagbytes [16]byte
-	binary.BigEndian.PutUint64(etagbytes[:8], uint64(stat.ModTime().UnixMilli()))
-	binary.BigEndian.PutUint64(etagbytes[8:], uint64(stat.Size()))
-	return `W/"` + base64HexEncoding.EncodeToString(etagbytes[:]) + `"`
 }
 
 func writeResHeaders(w http.ResponseWriter, reqHeaders http.Header, cfg fileConfig, cachecontrol string) bool {
@@ -226,19 +253,21 @@ func writeResHeaders(w http.ResponseWriter, reqHeaders http.Header, cfg fileConf
 	w.Header().Add(headerVary, headerAcceptEncoding)
 
 	if cachecontrol != "" {
-		// weak etag does not allow file serving by range query
-		weakETag := calcWeakETag(cfg.stat)
-
 		w.Header().Set(headerCacheControl, cachecontrol)
-		// ETag also used by [net/http.ServeContent] for byte range requests
-		w.Header().Set(headerETag, weakETag)
 
-		if match := strings.TrimSpace(reqHeaders.Get(headerIfNoneMatch)); match != "" {
-			for _, tag := range strings.Split(match, ",") {
-				tag = strings.TrimSpace(tag)
-				if tag == weakETag {
-					w.WriteHeader(http.StatusNotModified)
-					return true
+		if cfg.weakETag != "" {
+			// weak etag does not allow file serving by range query
+
+			// ETag also used by [net/http.ServeContent] for byte range requests
+			w.Header().Set(headerETag, cfg.weakETag)
+
+			if match := strings.TrimSpace(reqHeaders.Get(headerIfNoneMatch)); match != "" {
+				for _, tag := range strings.Split(match, ",") {
+					tag = strings.TrimSpace(tag)
+					if tag == cfg.weakETag {
+						w.WriteHeader(http.StatusNotModified)
+						return true
+					}
 				}
 			}
 		}
@@ -278,14 +307,12 @@ func sendFile(
 		return
 	}
 	if stat.IsDir() {
-		writeError(ctx, log, w, kerrors.WithMsg(nil, fmt.Sprintf("File %s is a directory", cfg.path)))
+		writeError(ctx, log, w, kerrors.WithMsg(nil, fmt.Sprintf("File %s changed to a directory", cfg.path)))
 		return
 	}
-	if etag := w.Header().Get(headerETag); strings.HasPrefix(etag, `W/`) {
-		if calcWeakETag(stat) != etag {
-			writeError(ctx, log, w, kerrors.WithMsg(nil, fmt.Sprintf("File changed while handling %s", cfg.path)))
-			return
-		}
+	if cfg.weakETag != "" && calcWeakETag(stat) != cfg.weakETag {
+		writeError(ctx, log, w, kerrors.WithMsg(nil, fmt.Sprintf("File changed while handling %s", cfg.path)))
+		return
 	}
 	http.ServeContent(w, r, cfg.basename, stat.ModTime(), rsf)
 }
@@ -300,7 +327,7 @@ func serveFile(
 ) {
 	ctx := r.Context()
 
-	cfg, err := getFileConfig(ctx, dir, r.Header, name, route)
+	cfg, err := getFileConfig(dir, r.Header, name, route)
 	if err != nil {
 		writeError(ctx, log, w, err)
 		return

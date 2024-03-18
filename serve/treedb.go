@@ -38,17 +38,6 @@ type (
 	}
 )
 
-// ErrNotFound is returned when a file is not found
-var ErrNotFound errNotFound
-
-type (
-	errNotFound struct{}
-)
-
-func (e errNotFound) Error() string {
-	return "File not found"
-}
-
 type (
 	SQLiteTreeDB struct {
 		repo treedbmodel.Repo

@@ -3,7 +3,6 @@ package serve
 import (
 	"bytes"
 	"compress/gzip"
-	"context"
 	"io"
 	"io/fs"
 	"net/http"
@@ -13,11 +12,8 @@ import (
 	"path"
 	"path/filepath"
 	"testing"
-	"testing/fstest"
 
 	"github.com/stretchr/testify/require"
-	"xorkevin.dev/fsserve/db"
-	"xorkevin.dev/kfs/kfstest"
 	"xorkevin.dev/klog"
 )
 
@@ -36,10 +32,7 @@ func TestServer(t *testing.T) {
 		"static/test.html":         `sample html file`,
 		"manifest.json":            `this is a test json file`,
 		"index.html":               `this is a test index html file`,
-	}
-	filesToRm := map[string]string{
-		"static/iwillbegone.txt": `I will be gone`,
-		"static/another.txt":     `This will be gone`,
+		"subdir/file.txt":          `placeholder file`,
 	}
 	srcGzipFiles := []string{
 		"static/testfile.js",
@@ -47,18 +40,9 @@ func TestServer(t *testing.T) {
 		"manifest.json",
 		"index.html",
 	}
-	gzipFilesToRm := []string{
-		"static/iwillbegone.txt",
-	}
 	{
 		var filemode fs.FileMode = 0o644
 		for k, v := range srcFiles {
-			name := filepath.FromSlash(path.Join(srcDir, k))
-			dir := filepath.Dir(name)
-			assert.NoError(os.MkdirAll(dir, 0o777))
-			assert.NoError(os.WriteFile(name, []byte(v), filemode))
-		}
-		for k, v := range filesToRm {
 			name := filepath.FromSlash(path.Join(srcDir, k))
 			dir := filepath.Dir(name)
 			assert.NoError(os.MkdirAll(dir, 0o777))
@@ -73,43 +57,145 @@ func TestServer(t *testing.T) {
 			assert.NoError(gw.Close())
 			assert.NoError(os.WriteFile(filepath.FromSlash(path.Join(srcDir, i)+".gz"), b.Bytes(), filemode))
 		}
-		for _, i := range gzipFilesToRm {
-			var b bytes.Buffer
-			gw.Reset(&b)
-			_, err := gw.Write([]byte(srcFiles[i]))
-			assert.NoError(err)
-			assert.NoError(gw.Close())
-			assert.NoError(os.WriteFile(filepath.FromSlash(path.Join(srcDir, i)+".gz"), b.Bytes(), filemode))
-		}
 	}
 
-	baseDir := path.Join(rootDir, "base")
-	treeDBFile := path.Join(baseDir, "tree.db")
-	assert.NoError(os.MkdirAll(filepath.Dir(filepath.FromSlash(treeDBFile)), 0o777))
-	rwDB := db.NewSQLClient(klog.Discard{}, "file:"+filepath.FromSlash(treeDBFile)+"?mode=rwc&_busy_timeout=5000&_journal_mode=WAL")
-	assert.NoError(rwDB.Init())
-	rdb := db.NewSQLClient(klog.Discard{}, "file:"+filepath.FromSlash(treeDBFile)+"?mode=ro&_busy_timeout=5000&_journal_mode=WAL")
-	assert.NoError(rdb.Init())
+	server := NewServer(
+		klog.Discard{},
+		os.DirFS(filepath.FromSlash(srcDir)),
+		Config{
+			Instance: "testinstance",
+			Proxies: []netip.Prefix{
+				netip.MustParsePrefix("10.0.0.0/8"),
+			},
+		},
+	)
+	assert.NoError(
+		server.Mount([]Route{
+			{
+				Prefix:       "/static/icon/",
+				Dir:          true,
+				Path:         "static/icon",
+				CacheControl: "public, max-age=31536000, no-cache",
+			},
+			{
+				Prefix:             "/static/",
+				Dir:                true,
+				Path:               "static",
+				DefaultContentType: "text/plain",
+				Encodings:          []Encoding{{Code: "gzip", Ext: ".gz"}},
+				CacheControl:       "public, max-age=31536000, immutable",
+			},
+			{
+				Prefix:       "/manifest.json",
+				Path:         "manifest.json",
+				Encodings:    []Encoding{{Code: "gzip", Ext: ".gz"}},
+				CacheControl: "public, max-age=31536000, no-cache",
+			},
+			{
+				Prefix: "/bogus",
+				Path:   "bogus",
+			},
+			{
+				Prefix: "/subdir",
+				Path:   "subdir",
+			},
+			{
+				Prefix:       "/",
+				Path:         "index.html",
+				Encodings:    []Encoding{{Code: "gzip", Ext: ".gz"}},
+				CacheControl: "public, max-age=31536000, no-cache",
+			},
+		}),
+	)
 
 	for _, tc := range []struct {
-		Name string
-		RWDB TreeDB
-		RDB  TreeDB
+		Name       string
+		Path       string
+		ReqHeaders map[string]string
+		Status     int
+		ResHeaders map[string]string
+		Body       string
+		Compressed bool
 	}{
 		{
-			Name: "sqlite",
-			RWDB: NewSQLiteTreeDB(
-				rwDB,
-				"content",
-				"encoded",
-				"content_gc",
-			),
-			RDB: NewSQLiteTreeDB(
-				rdb,
-				"content",
-				"encoded",
-				"content_gc",
-			),
+			Name: "file without compressed encoding",
+			Path: "/static/icon/someicon.png",
+			ReqHeaders: map[string]string{
+				headerAcceptEncoding: "gzip",
+			},
+			Status: http.StatusOK,
+			ResHeaders: map[string]string{
+				headerCacheControl: "public, max-age=31536000, no-cache",
+				headerContentType:  "image/png",
+			},
+			Body: `this is a test image file`,
+		},
+		{
+			Name: "file with compressed encoding",
+			Path: "/static/testfile.js",
+			ReqHeaders: map[string]string{
+				headerAcceptEncoding: "gzip",
+			},
+			Status: http.StatusOK,
+			ResHeaders: map[string]string{
+				headerCacheControl: "public, max-age=31536000, immutable",
+				headerContentType:  "text/javascript; charset=utf-8",
+			},
+			Body:       `this is a test js file`,
+			Compressed: true,
+		},
+		{
+			Name: "file with exact routing rule match",
+			Path: "/manifest.json",
+			ReqHeaders: map[string]string{
+				headerAcceptEncoding: "gzip",
+			},
+			Status: http.StatusOK,
+			ResHeaders: map[string]string{
+				headerCacheControl: "public, max-age=31536000, no-cache",
+				headerContentType:  "application/json",
+			},
+			Body:       `this is a test json file`,
+			Compressed: true,
+		},
+		{
+			Name: "fall back on index",
+			Path: "/someotherpath",
+			ReqHeaders: map[string]string{
+				headerAcceptEncoding: "gzip",
+			},
+			Status: http.StatusOK,
+			ResHeaders: map[string]string{
+				headerCacheControl: "public, max-age=31536000, no-cache",
+				headerContentType:  "text/html; charset=utf-8",
+			},
+			Body:       `this is a test index html file`,
+			Compressed: true,
+		},
+		{
+			Name:   "uses fallback content type",
+			Path:   "/static/fileunknownext",
+			Status: http.StatusOK,
+			ResHeaders: map[string]string{
+				headerCacheControl: "public, max-age=31536000, immutable",
+				headerContentType:  "text/plain",
+			},
+			Body: `<!DOCTYPE HTML>`,
+		},
+		{
+			Name:   "missing file in directory route",
+			Path:   "/static/bogus",
+			Status: http.StatusNotFound,
+		},
+		{
+			Name:   "missing exact file",
+			Path:   "/bogus",
+			Status: http.StatusNotFound,
+		},
+		{
+			Name:   "cannot serve directory",
+			Path:   "/subdir",
+			Status: http.StatusBadRequest,
 		},
 	} {
 		t.Run(tc.Name, func(t *testing.T) {
@@ -117,310 +203,85 @@ func TestServer(t *testing.T) {
 
 			assert := require.New(t)
 
-			contentDir := &kfstest.MapFS{
-				Fsys: fstest.MapFS{
-					"ishouldbegone": &fstest.MapFile{
-						Data: []byte("hello world"),
-					},
-				},
+			req := httptest.NewRequest(http.MethodGet, tc.Path, nil)
+			for k, v := range tc.ReqHeaders {
+				req.Header.Set(k, v)
+			}
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+
+			assert.Equal(tc.Status, rec.Code)
+
+			for k, v := range tc.ResHeaders {
+				assert.Equal(v, rec.Result().Header.Get(k))
 			}
 
-			tree := NewTree(
-				klog.Discard{},
-				tc.RWDB,
-				contentDir,
-			)
+			if tc.Status != http.StatusOK {
+				for _, i := range []string{
+					headerCacheControl,
+					headerContentEncoding,
+					headerETag,
+					headerVary,
+				} {
+					assert.Equal("", rec.Result().Header.Get(i))
+				}
+				return
+			}
 
-			assert.NoError(tree.Setup(context.Background()))
+			if tc.Compressed {
+				assert.Equal("gzip", rec.Result().Header.Get(headerContentEncoding))
+				gr, err := gzip.NewReader(rec.Body)
+				assert.NoError(err)
+				var b bytes.Buffer
+				_, err = io.Copy(&b, gr)
+				assert.NoError(err)
+				assert.Equal(tc.Body, b.String())
+			} else {
+				assert.Equal(tc.Body, rec.Body.String())
+			}
 
-			assert.NoError(tree.Add(context.Background(), "static/testfile.js", "", filepath.FromSlash(path.Join(srcDir, "static/testfile.js")), []EncodedFile{
-				{Code: "gzip", Name: filepath.FromSlash(path.Join(srcDir, "static/testfile.js.gz"))},
-			}))
-			assert.NoError(tree.Add(context.Background(), "static/iwillbegone.txt", "", filepath.FromSlash(path.Join(srcDir, "static/iwillbegone.txt")), []EncodedFile{
-				{Code: "gzip", Name: filepath.FromSlash(path.Join(srcDir, "static/iwillbegone.txt.gz"))},
-			}))
-			assert.NoError(tree.Add(context.Background(), "static/another.txt", "", filepath.FromSlash(path.Join(srcDir, "static/another.txt")), nil))
-			assert.NoError(tree.Rm(context.Background(), "static/another.txt"))
-
-			server := NewServer(klog.Discard{},
-				tc.RDB,
-				contentDir,
-				Config{
-					Instance: "testinstance",
-					Proxies: []netip.Prefix{
-						netip.MustParsePrefix("10.0.0.0/8"),
-					},
-				},
-			)
-			assert.NoError(
-				server.Mount([]Route{
-					{
-						Prefix:       "/static/icon/",
-						Dir:          true,
-						Path:         "static/icon",
-						CacheControl: "public, max-age=31536000, no-cache",
-					},
-					{
-						Prefix:       "/static/",
-						Dir:          true,
-						Path:         "static",
-						CacheControl: "public, max-age=31536000, immutable",
-					},
-					{
-						Prefix:       "/manifest.json",
-						Path:         "manifest.json",
-						CacheControl: "public, max-age=31536000, no-cache",
-					},
-					{
-						Prefix: "/bogus",
-						Path:   "bogus",
-					},
-					{
-						Prefix: "/subdir",
-						Path:   "subdir",
-					},
-					{
-						Prefix:       "/",
-						Path:         "index.html",
-						CacheControl: "public, max-age=31536000, no-cache",
-					},
-				}),
-			)
-
+			etag := rec.Result().Header.Get(headerETag)
+			assert.True(etag != "")
 			{
-				req := httptest.NewRequest(http.MethodGet, "/static/testfile.js", nil)
+				req := httptest.NewRequest(http.MethodGet, tc.Path, nil)
+				for k, v := range tc.ReqHeaders {
+					req.Header.Set(k, v)
+				}
+				req.Header.Set(headerIfNoneMatch, etag)
 				rec := httptest.NewRecorder()
 				server.ServeHTTP(rec, req)
-				assert.Equal(http.StatusOK, rec.Code)
-				assert.Equal(srcFiles["static/testfile.js"], rec.Body.String())
-			}
 
-			assert.NoError(tree.SyncContent(context.Background(), SyncConfig{
-				Dirs: []SyncDirConfig{
-					{
-						Dst:   "static",
-						Src:   path.Join(srcDir, "static"),
-						Match: `\.(?:html|js|png)$`,
-						Alts: []EncodedAlts{
-							{
-								Code:   "gzip",
-								Suffix: ".gz",
-							},
-						},
-					},
-					{
-						Dst:   "static/fileunknownext",
-						Exact: true,
-						Src:   path.Join(srcDir, "static/fileunknownext"),
-					},
-					{
-						Dst:   "manifest.json",
-						Exact: true,
-						Src:   path.Join(srcDir, "manifest.json"),
-						Alts: []EncodedAlts{
-							{
-								Code: "gzip",
-								Name: path.Join(srcDir, "manifest.json.gz"),
-							},
-						},
-					},
-					{
-						Dst:   "index.html",
-						Exact: true,
-						Src:   path.Join(srcDir, "index.html"),
-						Alts: []EncodedAlts{
-							{
-								Code: "gzip",
-								Name: path.Join(srcDir, "index.html.gz"),
-							},
-						},
-					},
-				},
-			}, true))
-			_, ok := contentDir.Fsys["ishouldbegone"]
-			assert.True(ok)
-			assert.Equal(len(srcFiles)+len(srcGzipFiles)+1, len(contentDir.Fsys))
-			assert.NoError(tree.GCBlobDir(context.Background(), true))
-			assert.Equal(len(srcFiles)+len(srcGzipFiles), len(contentDir.Fsys))
-			_, ok = contentDir.Fsys["ishouldbegone"]
-			assert.False(ok)
-
-			for _, tc := range []struct {
-				Name       string
-				Path       string
-				ReqHeaders map[string]string
-				Status     int
-				ResHeaders map[string]string
-				Body       string
-				Compressed bool
-			}{
-				{
-					Name: "file without compressed encoding",
-					Path: "/static/icon/someicon.png",
-					ReqHeaders: map[string]string{
-						headerAcceptEncoding: "gzip",
-					},
-					Status: http.StatusOK,
-					ResHeaders: map[string]string{
-						headerCacheControl: "public, max-age=31536000, no-cache",
-						headerContentType:  "image/png",
-					},
-					Body: `this is a test image file`,
-				},
-				{
-					Name: "file with compressed encoding",
-					Path: "/static/testfile.js",
-					ReqHeaders: map[string]string{
-						headerAcceptEncoding: "gzip",
-					},
-					Status: http.StatusOK,
-					ResHeaders: map[string]string{
-						headerCacheControl: "public, max-age=31536000, immutable",
-						headerContentType:  "text/javascript; charset=utf-8",
-					},
-					Body:       `this is a test js file`,
-					Compressed: true,
-				},
-				{
-					Name: "file with exact routing rule match",
-					Path: "/manifest.json",
-					ReqHeaders: map[string]string{
-						headerAcceptEncoding: "gzip",
-					},
-					Status: http.StatusOK,
-					ResHeaders: map[string]string{
-						headerCacheControl: "public, max-age=31536000, no-cache",
-						headerContentType:  "application/json",
-					},
-					Body:       `this is a test json file`,
-					Compressed: true,
-				},
-				{
-					Name: "fall back on index",
-					Path: "/someotherpath",
-					ReqHeaders: map[string]string{
-						headerAcceptEncoding: "gzip",
-					},
-					Status: http.StatusOK,
-					ResHeaders: map[string]string{
-						headerCacheControl: "public, max-age=31536000, no-cache",
-						headerContentType:  "text/html; charset=utf-8",
-					},
-					Body:       `this is a test index html file`,
-					Compressed: true,
-				},
-				{
-					Name:   "uses fallback content type",
-					Path:   "/static/fileunknownext",
-					Status: http.StatusOK,
-					ResHeaders: map[string]string{
-						headerCacheControl: "public, max-age=31536000, immutable",
-						headerContentType:  "application/octet-stream",
-					},
-					Body: `<!DOCTYPE HTML>`,
-				},
-				{
-					Name:   "missing file in directory route",
-					Path:   "/static/bogus",
-					Status: http.StatusNotFound,
-				},
-				{
-					Name:   "missing exact file",
-					Path:   "/bogus",
-					Status: http.StatusNotFound,
-				},
-				{
-					Name:   "cannot serve directory",
-					Path:   "/subdir",
-					Status: http.StatusNotFound,
-				},
-			} {
-				t.Run(tc.Name, func(t *testing.T) {
-					t.Parallel()
-
-					assert := require.New(t)
-
-					req := httptest.NewRequest(http.MethodGet, tc.Path, nil)
-					for k, v := range tc.ReqHeaders {
-						req.Header.Set(k, v)
-					}
-					rec := httptest.NewRecorder()
-					server.ServeHTTP(rec, req)
-
-					assert.Equal(tc.Status, rec.Code)
-
-					for k, v := range tc.ResHeaders {
-						assert.Equal(v, rec.Result().Header.Get(k))
-					}
-
-					if tc.Status != http.StatusOK {
-						for _, i := range []string{
-							headerCacheControl,
-							headerContentEncoding,
-							headerETag,
-							headerVary,
-						} {
-							assert.Equal("", rec.Result().Header.Get(i))
-						}
-						return
-					}
-
-					if tc.Compressed {
-						assert.Equal("gzip", rec.Result().Header.Get(headerContentEncoding))
-						gr, err := gzip.NewReader(rec.Body)
-						assert.NoError(err)
-						var b bytes.Buffer
-						_, err = io.Copy(&b, gr)
-						assert.NoError(err)
-						assert.Equal(tc.Body, b.String())
-					} else {
-						assert.Equal(tc.Body, rec.Body.String())
-					}
-
-					etag := rec.Result().Header.Get(headerETag)
-					assert.True(etag != "")
-					{
-						req := httptest.NewRequest(http.MethodGet, tc.Path, nil)
-						for k, v := range tc.ReqHeaders {
-							req.Header.Set(k, v)
-						}
-						req.Header.Set(headerIfNoneMatch, etag)
-						rec := httptest.NewRecorder()
-						server.ServeHTTP(rec, req)
-
-						assert.Equal(http.StatusNotModified, rec.Code)
-						for _, i := range []string{
-							headerContentEncoding,
-							headerContentType,
-						} {
-							assert.Equal("", rec.Result().Header.Get(i))
-						}
-					}
-				})
-			}
-
-			t.Run("prevents disallowed methods", func(t *testing.T) {
-				t.Parallel()
-
-				assert := require.New(t)
-
+				assert.Equal(http.StatusNotModified, rec.Code)
 				for _, i := range []string{
-					http.MethodPost,
-					http.MethodPut,
-					http.MethodPatch,
-					http.MethodDelete,
-					http.MethodConnect,
-					http.MethodOptions,
-					http.MethodTrace,
+					headerContentEncoding,
+					headerContentType,
 				} {
-					req := httptest.NewRequest(i, "/", nil)
-					rec := httptest.NewRecorder()
-					server.ServeHTTP(rec, req)
-					assert.Equal(http.StatusMethodNotAllowed, rec.Code)
+					assert.Equal("", rec.Result().Header.Get(i))
 				}
-			})
+			}
 		})
 	}
+
+	t.Run("prevents disallowed methods", func(t *testing.T) {
+		t.Parallel()
+
+		assert := require.New(t)
+
+		for _, i := range []string{
+			http.MethodPost,
+			http.MethodPut,
+			http.MethodPatch,
+			http.MethodDelete,
+			http.MethodConnect,
+			http.MethodOptions,
+			http.MethodTrace,
+		} {
+			req := httptest.NewRequest(i, "/", nil)
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			assert.Equal(http.StatusMethodNotAllowed, rec.Code)
+		}
+	})
 }
 
 func TestAddMimeTypes(t *testing.T) {
