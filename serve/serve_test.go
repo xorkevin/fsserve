@@ -30,6 +30,8 @@ func TestServer(t *testing.T) {
 		"static/testfile.js":       `this is a test js file`,
 		"static/fileunknownext":    `<!DOCTYPE HTML>`,
 		"static/test.html":         `sample html file`,
+		"static/hideme":            `should be hidden`,
+		"static/a":                 `also should be hidden`,
 		"manifest.json":            `this is a test json file`,
 		"index.html":               `this is a test index html file`,
 		"subdir/file.txt":          `placeholder file`,
@@ -81,8 +83,10 @@ func TestServer(t *testing.T) {
 				Prefix:             "/static/",
 				Dir:                true,
 				Path:               "static",
+				Include:            `.{2,}`,
+				Exclude:            `^hideme$`,
+				Encodings:          []Encoding{{Code: "gzip", Match: `\.js$`, Ext: ".gz"}},
 				DefaultContentType: "text/plain",
-				Encodings:          []Encoding{{Code: "gzip", Ext: ".gz"}},
 				CacheControl:       "public, max-age=31536000, immutable",
 			},
 			{
@@ -145,6 +149,19 @@ func TestServer(t *testing.T) {
 			Compressed: true,
 		},
 		{
+			Name: "file with compressed encoding but no match",
+			Path: "/static/test.html",
+			ReqHeaders: map[string]string{
+				headerAcceptEncoding: "gzip",
+			},
+			Status: http.StatusOK,
+			ResHeaders: map[string]string{
+				headerCacheControl: "public, max-age=31536000, immutable",
+				headerContentType:  "text/html; charset=utf-8",
+			},
+			Body: `sample html file`,
+		},
+		{
 			Name: "file with exact routing rule match",
 			Path: "/manifest.json",
 			ReqHeaders: map[string]string{
@@ -190,6 +207,16 @@ func TestServer(t *testing.T) {
 		{
 			Name:   "missing exact file",
 			Path:   "/bogus",
+			Status: http.StatusNotFound,
+		},
+		{
+			Name:   "file excluded",
+			Path:   "/static/hideme",
+			Status: http.StatusNotFound,
+		},
+		{
+			Name:   "file not included",
+			Path:   "/static/a",
 			Status: http.StatusNotFound,
 		},
 		{
