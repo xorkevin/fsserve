@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/netip"
 	"os"
@@ -80,68 +79,52 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 		klog.AAny("realip.proxies", proxystrs),
 	)
 
-	contentDir, treedb, d, err := c.getTree("ro")
-	if err != nil {
-		c.logFatal(err)
-		return
+	contentDir := c.getBaseFS()
+
+	s := serve.NewServer(
+		c.log.Logger,
+		contentDir,
+		serve.Config{
+			Instance: instance.Base64(),
+			Proxies:  proxies,
+		},
+	)
+	if err := s.Mount(routes); err != nil {
+		c.logFatal(kerrors.WithMsg(err, "Failed to mount server routes"))
 	}
 
-	if err := func() (retErr error) {
-		defer func() {
-			if err := d.Close(); err != nil {
-				retErr = errors.Join(retErr, kerrors.WithMsg(err, "Failed to close sql client"))
-			}
-		}()
-		s := serve.NewServer(
-			c.log.Logger,
-			treedb,
-			contentDir,
-			serve.Config{
-				Instance: instance.Base64(),
-				Proxies:  proxies,
-			},
-		)
-		if err := s.Mount(routes); err != nil {
-			return kerrors.WithMsg(err, "Failed to mount server routes")
-		}
-
-		port := c.serveFlags.port
+	port := c.serveFlags.port
+	if port == 0 {
+		port = viper.GetInt("port")
 		if port == 0 {
-			port = viper.GetInt("port")
-			if port == 0 {
-				port = 8080
-			}
+			port = 8080
 		}
-
-		opts := serve.Opts{
-			ReadTimeout:       c.readDurationConfig(viper.GetString("maxconnread"), seconds5),
-			ReadHeaderTimeout: c.readDurationConfig(viper.GetString("maxconnheader"), seconds2),
-			WriteTimeout:      c.readDurationConfig(viper.GetString("maxconnwrite"), seconds5),
-			IdleTimeout:       c.readDurationConfig(viper.GetString("maxconnidle"), seconds5),
-			MaxHeaderBytes:    c.readBytesConfig(viper.GetString("maxheadersize"), MEGABYTE),
-			GracefulShutdown:  c.readDurationConfig(viper.GetString("gracefulshutdown"), seconds5),
-		}
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		var wg sync.WaitGroup
-
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer cancel()
-			s.Serve(ctx, c.serveFlags.port, opts)
-		}()
-
-		waitForInterrupt(ctx)
-
-		cancel()
-		wg.Wait()
-		return nil
-	}(); err != nil {
-		c.logFatal(err)
-		return
 	}
+
+	opts := serve.Opts{
+		ReadTimeout:       c.readDurationConfig(viper.GetString("maxconnread"), seconds5),
+		ReadHeaderTimeout: c.readDurationConfig(viper.GetString("maxconnheader"), seconds2),
+		WriteTimeout:      c.readDurationConfig(viper.GetString("maxconnwrite"), seconds5),
+		IdleTimeout:       c.readDurationConfig(viper.GetString("maxconnidle"), seconds5),
+		MaxHeaderBytes:    c.readBytesConfig(viper.GetString("maxheadersize"), MEGABYTE),
+		GracefulShutdown:  c.readDurationConfig(viper.GetString("gracefulshutdown"), seconds5),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer cancel()
+		s.Serve(ctx, c.serveFlags.port, opts)
+	}()
+
+	waitForInterrupt(ctx)
+
+	cancel()
+	wg.Wait()
 }
 
 func waitForInterrupt(ctx context.Context) {

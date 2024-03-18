@@ -182,18 +182,18 @@ func detectEncoding(dir fs.FS, encodings []Encoding, reqHeaders http.Header, nam
 				continue
 			}
 		}
-		fp := name + i.Ext
-		stat, err := fs.Stat(dir, fp)
+		alt := name + i.Ext
+		stat, err := fs.Stat(dir, alt)
 		if err != nil {
-			if !errors.Is(err, fs.ErrNotExist) {
-				return "", nil, "", kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", fp))
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
 			}
-			continue
+			return "", nil, "", kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", alt))
 		}
 		if stat.IsDir() {
 			continue
 		}
-		return fp, stat, i.Code, nil
+		return alt, stat, i.Code, nil
 	}
 	stat, err := fs.Stat(dir, name)
 	if err != nil {
@@ -232,7 +232,7 @@ func calcWeakETag(stat fs.FileInfo) string {
 	var etagbytes [16]byte
 	binary.BigEndian.PutUint64(etagbytes[:8], uint64(stat.ModTime().UnixMilli()))
 	binary.BigEndian.PutUint64(etagbytes[8:], uint64(stat.Size()))
-	return `W/"` + base64HexEncoding.EncodeToString(etagbytes[:]) + `"`
+	return `W/"` + base64.RawURLEncoding.EncodeToString(etagbytes[:]) + `"`
 }
 
 func getFileConfig(
@@ -352,18 +352,24 @@ func serveFile(
 	sendFile(ctx, log, dir, w, r, *cfg)
 }
 
-func (s *serverSubdir) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if s.route.include != nil {
-		if !s.route.include.MatchString(r.URL.Path) {
-			writeError(r.Context(), s.log, w, kerrors.WithKind(nil, ErrNotFound, fmt.Sprintf("File is not included: %s", r.URL.Path)))
-			return
+func routeMatchPath(route Route, name string) bool {
+	if route.include != nil {
+		if !route.include.MatchString(name) {
+			return false
 		}
 	}
-	if s.route.exclude != nil {
-		if s.route.exclude.MatchString(r.URL.Path) {
-			writeError(r.Context(), s.log, w, kerrors.WithKind(nil, ErrNotFound, fmt.Sprintf("File is excluded: %s", r.URL.Path)))
-			return
+	if route.exclude != nil {
+		if route.exclude.MatchString(name) {
+			return false
 		}
+	}
+	return true
+}
+
+func (s *serverSubdir) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !routeMatchPath(s.route, r.URL.Path) {
+		writeError(r.Context(), s.log, w, kerrors.WithKind(nil, ErrNotFound, fmt.Sprintf("File is not included: %s", r.URL.Path)))
+		return
 	}
 	serveFile(s.log, s.dir, w, r, r.URL.Path, s.route)
 }
@@ -383,7 +389,47 @@ func NewServer(l klog.Logger, dir fs.FS, config Config) *Server {
 	}
 }
 
+func parseRoutes(routes []Route) error {
+	for n, i := range routes {
+		for _, j := range i.Encodings {
+			if j.Code == "" {
+				return kerrors.WithMsg(nil, fmt.Sprintf("Missing encoding code for route %s", i.Prefix))
+			}
+		}
+		if i.Dir {
+			if i.Include != "" {
+				var err error
+				routes[n].include, err = regexp.Compile(i.Include)
+				if err != nil {
+					return kerrors.WithMsg(err, fmt.Sprintf("Invalid route include regex for route %s", i.Prefix))
+				}
+			}
+			if i.Exclude != "" {
+				var err error
+				routes[n].exclude, err = regexp.Compile(i.Exclude)
+				if err != nil {
+					return kerrors.WithMsg(err, fmt.Sprintf("Invalid route include regex for route %s", i.Prefix))
+				}
+			}
+			for m, j := range i.Encodings {
+				if j.Match != "" {
+					var err error
+					i.Encodings[m].match, err = regexp.Compile(j.Match)
+					if err != nil {
+						return kerrors.WithMsg(err, fmt.Sprintf("Invalid encoding match regex for code %s of route %s", j.Code, i.Prefix))
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Server) Mount(routes []Route) error {
+	if err := parseRoutes(routes); err != nil {
+		return err
+	}
+
 	s.mux = http.NewServeMux()
 	for _, i := range routes {
 		s.log.Info(context.Background(), "Handle route",
@@ -392,36 +438,10 @@ func (s *Server) Mount(routes []Route) error {
 			klog.ABool("route.dir", i.Dir),
 		)
 		log := klog.NewLevelLogger(s.log.Logger.Sublogger("router", klog.AString("router.path", i.Prefix)))
-		for n, j := range i.Encodings {
-			if j.Code == "" {
-				return kerrors.WithMsg(nil, fmt.Sprintf("Missing encoding code for route %s", i.Prefix))
-			}
-			if j.Match != "" {
-				var err error
-				i.Encodings[n].match, err = regexp.Compile(j.Match)
-				if err != nil {
-					return kerrors.WithMsg(err, fmt.Sprintf("Invalid encoding match regex for code %s of route %s", j.Code, i.Prefix))
-				}
-			}
-		}
 		if i.Dir {
 			dir, err := fs.Sub(s.dir, i.Path)
 			if err != nil {
 				return kerrors.WithMsg(err, fmt.Sprintf("Failed to open subdir %s", i.Path))
-			}
-			if i.Include != "" {
-				var err error
-				i.include, err = regexp.Compile(i.Include)
-				if err != nil {
-					return kerrors.WithMsg(err, fmt.Sprintf("Invalid route include regex for route %s", i.Prefix))
-				}
-			}
-			if i.Exclude != "" {
-				var err error
-				i.exclude, err = regexp.Compile(i.Exclude)
-				if err != nil {
-					return kerrors.WithMsg(err, fmt.Sprintf("Invalid route include regex for route %s", i.Prefix))
-				}
 			}
 			s.mux.Handle(i.Prefix, http.StripPrefix(i.Prefix, &serverSubdir{
 				log:   log,

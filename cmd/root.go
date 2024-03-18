@@ -4,18 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
-	"net/url"
 	"os"
-	"path"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"xorkevin.dev/fsserve/db"
 	"xorkevin.dev/fsserve/serve"
-	"xorkevin.dev/kerrors"
-	"xorkevin.dev/kfs"
 	"xorkevin.dev/klog"
 )
 
@@ -60,9 +54,6 @@ func (c *Cmd) Execute() {
 
 	viper.SetDefault("port", 8080)
 	viper.SetDefault("base", "")
-	viper.SetDefault("contentdir", "content")
-	viper.SetDefault("treedb", "tree.db")
-	viper.SetDefault("sync", serve.SyncConfig{})
 	viper.SetDefault("exttotype", []serve.MimeType{})
 	viper.SetDefault("routes", []serve.Route{})
 	viper.SetDefault("maxheadersize", "1M")
@@ -71,6 +62,7 @@ func (c *Cmd) Execute() {
 	viper.SetDefault("maxconnwrite", "5s")
 	viper.SetDefault("maxconnidle", "5s")
 	viper.SetDefault("gracefulshutdown", "5s")
+	viper.SetDefault("checksum", "")
 
 	c.rootCmd = rootCmd
 
@@ -85,7 +77,7 @@ func (c *Cmd) Execute() {
 	}
 }
 
-func (c *Cmd) getBaseFS() (fs.FS, string) {
+func (c *Cmd) getBaseFS() fs.FS {
 	base := c.serveFlags.base
 	if base == "" {
 		base = viper.GetString("base")
@@ -93,58 +85,10 @@ func (c *Cmd) getBaseFS() (fs.FS, string) {
 			base = "."
 		}
 	}
-	return kfs.DirFS(base), base
-}
-
-func (c *Cmd) getContentFS(rootDir fs.FS, base string) (fs.FS, error) {
-	contentdir := viper.GetString("contentdir")
-	contentDir, err := fs.Sub(rootDir, contentdir)
-	if err != nil {
-		return nil, kerrors.WithMsg(err, "Invalid content dir")
-	}
-	c.log.Info(context.Background(), "Serving directory at base",
-		klog.AString("fs.contentdir", path.Join(base, contentdir)),
+	c.log.Info(context.Background(), "Using base directory",
+		klog.AString("path", base),
 	)
-	return contentDir, nil
-}
-
-func (c *Cmd) getTreeDB(rootDir fs.FS, base string, mode string) (serve.TreeDB, *db.SQLClient, error) {
-	// url must be in the form of
-	// file:rel/path/to/file.db?optquery=value&otheroptquery=value
-	u := path.Join(base, viper.GetString("treedb"))
-	dir := path.Dir(u)
-	q := url.Values{}
-	q.Set("mode", mode)
-	q.Set("_busy_timeout", "5000")
-	q.Set("_journal_mode", "WAL")
-	dsn := fmt.Sprintf("file:%s?%s", filepath.FromSlash(u), q.Encode())
-	if err := os.MkdirAll(filepath.FromSlash(dir), 0o777); err != nil {
-		return nil, nil, kerrors.WithMsg(err, "Failed to mkdir for db")
-	}
-	d := db.NewSQLClient(c.log.Logger.Sublogger("db"), dsn)
-	if err := d.Init(); err != nil {
-		return nil, nil, kerrors.WithMsg(err, "Failed to init sqlite db client")
-	}
-
-	c.log.Info(context.Background(), "Using treedb",
-		klog.AString("db.engine", "sqlite"),
-		klog.AString("db.file", u),
-	)
-
-	return serve.NewSQLiteTreeDB(d, "content", "encoded", "content_gc"), d, nil
-}
-
-func (c *Cmd) getTree(mode string) (fs.FS, serve.TreeDB, *db.SQLClient, error) {
-	rootDir, base := c.getBaseFS()
-	contentDir, err := c.getContentFS(rootDir, base)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	treedb, d, err := c.getTreeDB(rootDir, base, mode)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	return contentDir, treedb, d, nil
+	return os.DirFS(base)
 }
 
 // initConfig reads in config file and ENV variables if set.
