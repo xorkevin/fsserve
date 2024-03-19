@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"xorkevin.dev/fsserve/serve"
+	"xorkevin.dev/kfs"
 	"xorkevin.dev/klog"
 )
 
@@ -88,7 +89,7 @@ func (c *Cmd) getBaseFS() fs.FS {
 	c.log.Info(context.Background(), "Using base directory",
 		klog.AString("path", base),
 	)
-	return os.DirFS(base)
+	return kfs.DirFS(base)
 }
 
 // initConfig reads in config file and ENV variables if set.

@@ -6,11 +6,11 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.20
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/viper v1.17.0
-	github.com/stretchr/testify v1.8.4
+	github.com/stretchr/testify v1.9.0
 	golang.org/x/crypto v0.16.0
 	xorkevin.dev/forge v0.5.2
 	xorkevin.dev/kerrors v0.1.5
-	xorkevin.dev/kfs v0.1.2
+	xorkevin.dev/kfs v0.1.3
 	xorkevin.dev/klog v0.1.0
 )
 

@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"xorkevin.dev/kfs"
 	"xorkevin.dev/klog"
 )
 
@@ -63,7 +64,7 @@ func TestServer(t *testing.T) {
 
 	server := NewServer(
 		klog.Discard{},
-		os.DirFS(filepath.FromSlash(srcDir)),
+		kfs.DirFS(filepath.FromSlash(srcDir)),
 		Config{
 			Instance: "testinstance",
 			Proxies: []netip.Prefix{
