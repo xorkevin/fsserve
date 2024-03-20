@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"xorkevin.dev/kerrors"
+	"xorkevin.dev/kfs"
 	"xorkevin.dev/klog"
 )
 
@@ -235,7 +236,13 @@ func calcWeakETag(stat fs.FileInfo) string {
 	return `W/"` + base64.RawURLEncoding.EncodeToString(etagbytes[:]) + `"`
 }
 
+func calcStrongETag(checksum string) string {
+	return `"` + checksum + `"`
+}
+
 func getFileConfig(
+	ctx context.Context,
+	log *klog.LevelLogger,
 	dir fs.FS,
 	reqHeaders http.Header,
 	name string,
@@ -248,13 +255,26 @@ func getFileConfig(
 		return nil, err
 	}
 
+	var checksum string
+	if fullFilePath, err := kfs.FullFilePath(dir, p); err != nil {
+		log.Err(ctx, kerrors.WithMsg(err, "Failed to get full file path for file"),
+			klog.AString("path", p),
+		)
+	} else {
+		var err error
+		checksum, err = readXAttr(fullFilePath, xattrChecksum)
+		if err != nil {
+			log.Err(ctx, err, klog.AString("path", p))
+		}
+	}
+
 	return &fileConfig{
 		path:       p,
 		basename:   path.Base(name),
 		ctype:      ctype,
 		encoding:   encoding,
 		weakETag:   calcWeakETag(stat),
-		strongETag: "",
+		strongETag: calcStrongETag(checksum),
 	}, nil
 }
 
@@ -267,25 +287,32 @@ func writeResHeaders(w http.ResponseWriter, reqHeaders http.Header, cfg fileConf
 	if cachecontrol != "" {
 		w.Header().Set(headerCacheControl, cachecontrol)
 
-		if cfg.weakETag != "" {
-			// weak etag does not allow file serving by range query
-
-			// ETag also used by [net/http.ServeContent] for byte range requests
-			w.Header().Set(headerETag, cfg.weakETag)
-
+		// ETag used by [net/http.ServeContent] for byte range requests
+		// strong etag allows serving range queries
+		// weak etag does not allow range queries
+		if cfg.weakETag != "" || cfg.strongETag != "" {
 			if match := strings.TrimSpace(reqHeaders.Get(headerIfNoneMatch)); match != "" {
 				for _, tag := range strings.Split(match, ",") {
 					tag = strings.TrimSpace(tag)
-					if tag == cfg.weakETag {
+					if tag == cfg.strongETag || tag == cfg.weakETag {
+						w.Header().Set(headerETag, tag)
 						w.WriteHeader(http.StatusNotModified)
 						return true
 					}
 				}
 			}
+
+			if cfg.strongETag != "" {
+				w.Header().Set(headerETag, cfg.strongETag)
+			} else if cfg.weakETag != "" {
+				w.Header().Set(headerETag, cfg.weakETag)
+			}
 		}
 	}
 
-	w.Header().Set(headerContentEncoding, cfg.encoding)
+	if cfg.encoding != "" {
+		w.Header().Set(headerContentEncoding, cfg.encoding)
+	}
 	w.Header().Set(headerContentType, cfg.ctype)
 	return false
 }
@@ -339,7 +366,7 @@ func serveFile(
 ) {
 	ctx := r.Context()
 
-	cfg, err := getFileConfig(dir, r.Header, name, route)
+	cfg, err := getFileConfig(ctx, log, dir, r.Header, name, route)
 	if err != nil {
 		writeError(ctx, log, w, err)
 		return

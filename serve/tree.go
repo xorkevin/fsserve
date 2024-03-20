@@ -147,7 +147,7 @@ func (t *Tree) hashFileAndStore(ctx context.Context, visitedSet map[string]struc
 	if err != nil {
 		return kerrors.WithMsg(err, fmt.Sprintf("Failed to get full file path for file %s", p))
 	}
-	checksum, err := t.readXAttr(fullFilePath, xattrChecksum)
+	checksum, err := readXAttr(fullFilePath, xattrChecksum)
 	if err != nil {
 		return err
 	}
@@ -167,7 +167,7 @@ func (t *Tree) hashFileAndStore(ctx context.Context, visitedSet map[string]struc
 			)
 		}
 
-		if err := t.setXAttr(fullFilePath, xattrChecksum, checksum); err != nil {
+		if err := setXAttr(fullFilePath, xattrChecksum, checksum); err != nil {
 			return err
 		}
 	}
@@ -183,12 +183,15 @@ const (
 	xattrChecksum = "user.fsserve.checksum"
 )
 
-func (t *Tree) readXAttr(fullFilePath string, attr string) (string, error) {
+func readXAttr(fullFilePath string, attr string) (string, error) {
 	var buf [128]byte
 	b := buf[:]
 	for {
 		size, err := syscall.Getxattr(filepath.FromSlash(fullFilePath), attr, b[:])
 		if err != nil {
+			if errors.Is(err, syscall.ENODATA) {
+				return "", nil
+			}
 			return "", kerrors.WithMsg(err, fmt.Sprintf("Failed getting xattr %s of file %s", attr, fullFilePath))
 		}
 		if size <= len(b) {
@@ -198,7 +201,7 @@ func (t *Tree) readXAttr(fullFilePath string, attr string) (string, error) {
 	}
 }
 
-func (t *Tree) setXAttr(fullFilePath string, attr string, val string) error {
+func setXAttr(fullFilePath string, attr string, val string) error {
 	if err := syscall.Setxattr(filepath.FromSlash(fullFilePath), attr, []byte(val), 0); err != nil {
 		return kerrors.WithMsg(err, fmt.Sprintf("Failed setting xattr %s of file %s", attr, fullFilePath))
 	}
