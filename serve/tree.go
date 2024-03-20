@@ -8,9 +8,12 @@ import (
 	"io"
 	"io/fs"
 	"path"
+	"path/filepath"
+	"syscall"
 
 	"golang.org/x/crypto/blake2b"
 	"xorkevin.dev/kerrors"
+	"xorkevin.dev/kfs"
 	"xorkevin.dev/klog"
 )
 
@@ -51,14 +54,14 @@ func (t *Tree) Checksum(ctx context.Context, routes []Route, force bool) error {
 			if !stat.IsDir() {
 				return kerrors.WithMsg(err, fmt.Sprintf("File %s is not a directory", i.Path))
 			}
-			if err := t.checksumDir(ctx, visitedSet, i, "", fs.FileInfoToDirEntry(stat)); err != nil {
+			if err := t.checksumDir(ctx, visitedSet, i, "", fs.FileInfoToDirEntry(stat), force); err != nil {
 				return err
 			}
 		} else {
 			if stat.IsDir() {
 				return kerrors.WithMsg(err, fmt.Sprintf("File %s is a directory", i.Path))
 			}
-			if err := t.hashFileAndStore(ctx, visitedSet, i.Path); err != nil {
+			if err := t.hashFileAndStore(ctx, visitedSet, i.Path, force); err != nil {
 				return err
 			}
 		}
@@ -66,7 +69,7 @@ func (t *Tree) Checksum(ctx context.Context, routes []Route, force bool) error {
 	return nil
 }
 
-func (t *Tree) checksumDir(ctx context.Context, visitedSet map[string]struct{}, route Route, name string, entry fs.DirEntry) error {
+func (t *Tree) checksumDir(ctx context.Context, visitedSet map[string]struct{}, route Route, name string, entry fs.DirEntry, force bool) error {
 	p := path.Join(route.Path, name)
 
 	if !entry.IsDir() {
@@ -78,7 +81,7 @@ func (t *Tree) checksumDir(ctx context.Context, visitedSet map[string]struct{}, 
 			return nil
 		}
 
-		if err := t.checksumFile(ctx, visitedSet, route, name); err != nil {
+		if err := t.checksumFile(ctx, visitedSet, route, name, force); err != nil {
 			return err
 		}
 		return nil
@@ -93,17 +96,17 @@ func (t *Tree) checksumDir(ctx context.Context, visitedSet map[string]struct{}, 
 		klog.AString("path", p),
 	)
 	for _, i := range entries {
-		if err := t.checksumDir(ctx, visitedSet, route, path.Join(name, i.Name()), i); err != nil {
+		if err := t.checksumDir(ctx, visitedSet, route, path.Join(name, i.Name()), i, force); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (t *Tree) checksumFile(ctx context.Context, visitedSet map[string]struct{}, route Route, name string) error {
+func (t *Tree) checksumFile(ctx context.Context, visitedSet map[string]struct{}, route Route, name string, force bool) error {
 	p := path.Join(route.Path, name)
 
-	if err := t.hashFileAndStore(ctx, visitedSet, p); err != nil {
+	if err := t.hashFileAndStore(ctx, visitedSet, p, force); err != nil {
 		return err
 	}
 
@@ -124,7 +127,7 @@ func (t *Tree) checksumFile(ctx context.Context, visitedSet map[string]struct{},
 		if stat.IsDir() {
 			continue
 		}
-		if err := t.hashFileAndStore(ctx, visitedSet, alt); err != nil {
+		if err := t.hashFileAndStore(ctx, visitedSet, alt, force); err != nil {
 			return err
 		}
 	}
@@ -132,7 +135,7 @@ func (t *Tree) checksumFile(ctx context.Context, visitedSet map[string]struct{},
 	return nil
 }
 
-func (t *Tree) hashFileAndStore(ctx context.Context, visitedSet map[string]struct{}, p string) error {
+func (t *Tree) hashFileAndStore(ctx context.Context, visitedSet map[string]struct{}, p string, force bool) error {
 	if _, ok := visitedSet[p]; ok {
 		t.log.Debug(ctx, "Skipping rehashing file",
 			klog.AString("path", p),
@@ -140,12 +143,34 @@ func (t *Tree) hashFileAndStore(ctx context.Context, visitedSet map[string]struc
 		return nil
 	}
 
-	_, err := t.hashFile(t.dir, p)
+	fullFilePath, err := kfs.FullFilePath(t.dir, p)
+	if err != nil {
+		return kerrors.WithMsg(err, fmt.Sprintf("Failed to get full file path for file %s", p))
+	}
+	checksum, err := t.readXAttr(fullFilePath, xattrChecksum)
+	if err != nil {
+		return err
+	}
+	if checksum != "" && !force {
+		return nil
+	}
+
+	hash, err := t.hashFile(p)
 	if err != nil {
 		return kerrors.WithMsg(err, fmt.Sprintf("Failed to hash file %s", p))
 	}
 
-	// TODO place file hash on xattrs
+	if hash != checksum {
+		if checksum != "" {
+			t.log.Warn(ctx, "Checksum mismatch on file",
+				klog.AString("path", p),
+			)
+		}
+
+		if err := t.setXAttr(fullFilePath, xattrChecksum, checksum); err != nil {
+			return err
+		}
+	}
 
 	visitedSet[p] = struct{}{}
 	t.log.Info(ctx, "Hashed file",
@@ -154,8 +179,34 @@ func (t *Tree) hashFileAndStore(ctx context.Context, visitedSet map[string]struc
 	return nil
 }
 
-func (t *Tree) hashFile(dir fs.FS, name string) (_ string, retErr error) {
-	f, err := dir.Open(name)
+const (
+	xattrChecksum = "user.fsserve.checksum"
+)
+
+func (t *Tree) readXAttr(fullFilePath string, attr string) (string, error) {
+	var buf [128]byte
+	b := buf[:]
+	for {
+		size, err := syscall.Getxattr(filepath.FromSlash(fullFilePath), attr, b[:])
+		if err != nil {
+			return "", kerrors.WithMsg(err, fmt.Sprintf("Failed getting xattr %s of file %s", attr, fullFilePath))
+		}
+		if size <= len(b) {
+			return string(b[:size]), nil
+		}
+		b = make([]byte, size)
+	}
+}
+
+func (t *Tree) setXAttr(fullFilePath string, attr string, val string) error {
+	if err := syscall.Setxattr(filepath.FromSlash(fullFilePath), attr, []byte(val), 0); err != nil {
+		return kerrors.WithMsg(err, fmt.Sprintf("Failed setting xattr %s of file %s", attr, fullFilePath))
+	}
+	return nil
+}
+
+func (t *Tree) hashFile(p string) (_ string, retErr error) {
+	f, err := t.dir.Open(p)
 	if err != nil {
 		return "", kerrors.WithMsg(err, "Failed opening file")
 	}
