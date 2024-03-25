@@ -63,7 +63,6 @@ func (c *Cmd) Execute() {
 	viper.SetDefault("maxconnwrite", "5s")
 	viper.SetDefault("maxconnidle", "5s")
 	viper.SetDefault("gracefulshutdown", "5s")
-	viper.SetDefault("checksum", "")
 
 	c.rootCmd = rootCmd
 
