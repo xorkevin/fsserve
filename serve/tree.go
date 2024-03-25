@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"path"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"golang.org/x/crypto/blake2b"
@@ -147,27 +148,44 @@ func (t *Tree) hashFileAndStore(ctx context.Context, visitedSet map[string]struc
 	if err != nil {
 		return kerrors.WithMsg(err, fmt.Sprintf("Failed to get full file path for file %s", p))
 	}
-	checksum, err := readXAttr(fullFilePath, xattrChecksum)
+	currentStat, err := fs.Stat(t.dir, p)
 	if err != nil {
-		return err
+		return kerrors.WithMsg(err, fmt.Sprintf("Failed to stat file %s", p))
 	}
-	if checksum != "" && !force {
+	currentTag := statToTag(currentStat)
+	if currentTag == "" {
+		return kerrors.WithMsg(nil, fmt.Sprintf("Unable to read modification time of file %s", p))
+	}
+	existingHash, existingTag, err := readChecksumXAttr(fullFilePath)
+	if err != nil {
+		if errors.Is(err, ErrMalformedChecksum) {
+			t.log.Warn(ctx, "Found malformed checksum on file",
+				klog.AString("path", p),
+			)
+		} else {
+			return err
+		}
+	}
+	if currentTag == existingTag && !force {
 		return nil
 	}
 
-	hash, err := t.hashFile(p)
+	hash, tag, err := t.hashFile(p)
 	if err != nil {
 		return kerrors.WithMsg(err, fmt.Sprintf("Failed to hash file %s", p))
 	}
+	if tag != currentTag {
+		return kerrors.WithMsg(nil, fmt.Sprintf("File changed while hashing %s", p))
+	}
 
-	if hash != checksum {
-		if checksum != "" {
-			t.log.Warn(ctx, "Checksum mismatch on file",
+	if hash != existingHash || tag != existingTag {
+		if tag == existingTag && hash != existingHash {
+			t.log.Warn(ctx, "Checksum mismatch on file for matching tag",
 				klog.AString("path", p),
 			)
 		}
 
-		if err := setXAttr(fullFilePath, xattrChecksum, checksum); err != nil {
+		if err := setChecksumXAttr(fullFilePath, hash, tag); err != nil {
 			return err
 		}
 	}
@@ -180,24 +198,49 @@ func (t *Tree) hashFileAndStore(ctx context.Context, visitedSet map[string]struc
 }
 
 const (
-	xattrChecksum = "user.fsserve.checksum"
+	xattrChecksum     = "user.fsserve.checksum"
+	checksumSeparator = ":"
+	checksumVersion   = "v1"
+	checksumPrefix    = checksumVersion + checksumSeparator
 )
 
-func readXAttr(fullFilePath string, attr string) (string, error) {
+func readChecksumXAttr(fullFilePath string) (string, string, error) {
 	var buf [128]byte
-	b := buf[:]
+	val, err := readXAttr(fullFilePath, xattrChecksum, buf[:])
+	if err != nil {
+		return "", "", err
+	}
+	if val == "" {
+		return "", "", nil
+	}
+	val, ok := strings.CutPrefix(val, checksumPrefix)
+	if !ok {
+		return "", "", kerrors.WithKind(nil, ErrMalformedChecksum, "Malformed checksum")
+	}
+	hash, tag, ok := strings.Cut(val, checksumSeparator)
+	if !ok {
+		return "", "", kerrors.WithKind(nil, ErrMalformedChecksum, "Malformed checksum")
+	}
+	return hash, tag, nil
+}
+
+func setChecksumXAttr(fullFilePath string, hash, tag string) error {
+	return setXAttr(fullFilePath, xattrChecksum, checksumPrefix+hash+":"+tag)
+}
+
+func readXAttr(fullFilePath string, attr string, buf []byte) (string, error) {
 	for {
-		size, err := syscall.Getxattr(filepath.FromSlash(fullFilePath), attr, b[:])
+		size, err := syscall.Getxattr(filepath.FromSlash(fullFilePath), attr, buf)
 		if err != nil {
 			if errors.Is(err, syscall.ENODATA) {
 				return "", nil
 			}
 			return "", kerrors.WithMsg(err, fmt.Sprintf("Failed getting xattr %s of file %s", attr, fullFilePath))
 		}
-		if size <= len(b) {
-			return string(b[:size]), nil
+		if size <= len(buf) {
+			return string(buf[:size]), nil
 		}
-		b = make([]byte, size)
+		buf = make([]byte, size)
 	}
 }
 
@@ -208,22 +251,30 @@ func setXAttr(fullFilePath string, attr string, val string) error {
 	return nil
 }
 
-func (t *Tree) hashFile(p string) (_ string, retErr error) {
+func (t *Tree) hashFile(p string) (_ string, _ string, retErr error) {
 	f, err := t.dir.Open(p)
 	if err != nil {
-		return "", kerrors.WithMsg(err, "Failed opening file")
+		return "", "", kerrors.WithMsg(err, "Failed opening file")
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
 			retErr = errors.Join(retErr, kerrors.WithMsg(err, "Failed to close file"))
 		}
 	}()
+	stat, err := f.Stat()
+	if err != nil {
+		return "", "", kerrors.WithMsg(err, "Failed to stat file")
+	}
+	tag := statToTag(stat)
+	if tag == "" {
+		return "", "", kerrors.WithMsg(nil, "Unable to read file modification time")
+	}
 	h, err := blake2b.New512(nil)
 	if err != nil {
-		return "", kerrors.WithMsg(err, "Failed creating blake2b hash")
+		return "", "", kerrors.WithMsg(err, "Failed creating blake2b hash")
 	}
 	if _, err := io.Copy(h, f); err != nil {
-		return "", kerrors.WithMsg(err, "Failed reading file")
+		return "", "", kerrors.WithMsg(err, "Failed reading file")
 	}
-	return base64.RawURLEncoding.EncodeToString(h.Sum(nil)), nil
+	return base64.RawURLEncoding.EncodeToString(h.Sum(nil)), tag, nil
 }

@@ -29,11 +29,14 @@ var (
 	ErrNotFound errNotFound
 	// ErrInvalidReq is returned when a file request is invalid
 	ErrInvalidReq errInvalidReq
+	// ErrMalformedChecksum is returned when a file checksum is malformed
+	ErrMalformedChecksum errMalformedChecksum
 )
 
 type (
-	errNotFound   struct{}
-	errInvalidReq struct{}
+	errNotFound          struct{}
+	errInvalidReq        struct{}
+	errMalformedChecksum struct{}
 )
 
 func (e errNotFound) Error() string {
@@ -42,6 +45,10 @@ func (e errNotFound) Error() string {
 
 func (e errInvalidReq) Error() string {
 	return "Invalid file request"
+}
+
+func (e errMalformedChecksum) Error() string {
+	return "Malformed checksum"
 }
 
 type (
@@ -116,12 +123,12 @@ type (
 	}
 
 	fileConfig struct {
-		path       string
-		basename   string
-		ctype      string
-		encoding   string
-		weakETag   string
-		strongETag string
+		path     string
+		basename string
+		ctype    string
+		encoding string
+		checksum string
+		tag      string
 	}
 )
 
@@ -226,18 +233,14 @@ func detectContentType(name string, fallbackContentType string) string {
 	return defaultContentType
 }
 
-func calcWeakETag(stat fs.FileInfo) string {
+func statToTag(stat fs.FileInfo) string {
 	if stat.ModTime().IsZero() {
 		return ""
 	}
 	var etagbytes [16]byte
 	binary.BigEndian.PutUint64(etagbytes[:8], uint64(stat.ModTime().UnixMilli()))
 	binary.BigEndian.PutUint64(etagbytes[8:], uint64(stat.Size()))
-	return `W/"` + base64.RawURLEncoding.EncodeToString(etagbytes[:]) + `"`
-}
-
-func calcStrongETag(checksum string) string {
-	return `"` + checksum + `"`
+	return base64.RawURLEncoding.EncodeToString(etagbytes[:])
 }
 
 func getFileConfig(
@@ -255,27 +258,36 @@ func getFileConfig(
 		return nil, err
 	}
 
+	currentTag := statToTag(stat)
 	var checksum string
 	if fullFilePath, err := kfs.FullFilePath(dir, p); err != nil {
 		log.Err(ctx, kerrors.WithMsg(err, "Failed to get full file path for file"),
 			klog.AString("path", p),
 		)
 	} else {
-		var err error
-		checksum, err = readXAttr(fullFilePath, xattrChecksum)
-		if err != nil {
+		if hash, tag, err := readChecksumXAttr(fullFilePath); err != nil {
 			log.Err(ctx, err, klog.AString("path", p))
+		} else if tag == currentTag {
+			checksum = hash
 		}
 	}
 
 	return &fileConfig{
-		path:       p,
-		basename:   path.Base(name),
-		ctype:      ctype,
-		encoding:   encoding,
-		weakETag:   calcWeakETag(stat),
-		strongETag: calcStrongETag(checksum),
+		path:     p,
+		basename: path.Base(name),
+		ctype:    ctype,
+		encoding: encoding,
+		checksum: checksum,
+		tag:      currentTag,
 	}, nil
+}
+
+func calcWeakETag(tag string) string {
+	return `W/"` + tag + `"`
+}
+
+func calcStrongETag(tag string) string {
+	return `"` + tag + `"`
 }
 
 func writeResHeaders(w http.ResponseWriter, reqHeaders http.Header, cfg fileConfig, cachecontrol string) bool {
@@ -290,11 +302,19 @@ func writeResHeaders(w http.ResponseWriter, reqHeaders http.Header, cfg fileConf
 		// ETag used by [net/http.ServeContent] for byte range requests
 		// strong etag allows serving range queries
 		// weak etag does not allow range queries
-		if cfg.weakETag != "" || cfg.strongETag != "" {
+		if cfg.tag != "" {
+			weakETag := calcWeakETag(cfg.tag)
+			var strongETag string
+			if cfg.checksum != "" {
+				strongETag = calcStrongETag(cfg.checksum)
+			}
 			if match := strings.TrimSpace(reqHeaders.Get(headerIfNoneMatch)); match != "" {
 				for _, tag := range strings.Split(match, ",") {
 					tag = strings.TrimSpace(tag)
-					if tag == cfg.strongETag || tag == cfg.weakETag {
+					if tag == "" {
+						continue
+					}
+					if tag == strongETag || tag == weakETag {
 						w.Header().Set(headerETag, tag)
 						w.WriteHeader(http.StatusNotModified)
 						return true
@@ -302,10 +322,10 @@ func writeResHeaders(w http.ResponseWriter, reqHeaders http.Header, cfg fileConf
 				}
 			}
 
-			if cfg.strongETag != "" {
-				w.Header().Set(headerETag, cfg.strongETag)
-			} else if cfg.weakETag != "" {
-				w.Header().Set(headerETag, cfg.weakETag)
+			if strongETag != "" {
+				w.Header().Set(headerETag, strongETag)
+			} else {
+				w.Header().Set(headerETag, weakETag)
 			}
 		}
 	}
@@ -349,7 +369,7 @@ func sendFile(
 		writeError(ctx, log, w, kerrors.WithMsg(nil, fmt.Sprintf("File %s changed to a directory", cfg.path)))
 		return
 	}
-	if cfg.weakETag != "" && calcWeakETag(stat) != cfg.weakETag {
+	if cfg.tag != "" && statToTag(stat) != cfg.tag {
 		writeError(ctx, log, w, kerrors.WithMsg(nil, fmt.Sprintf("File changed while handling %s", cfg.path)))
 		return
 	}
