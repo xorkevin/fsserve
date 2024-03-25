@@ -1,25 +1,29 @@
 .nh
-.TH "fsserve" "1" "Dec 2023" "" ""
+.TH "fsserve" "1" "Mar 2024" "" ""
 
 .SH NAME
 .PP
-fsserve-tree-init - Initializes the content tree db
+fsserve-tree-checksum - Checksums the content tree
 
 
 .SH SYNOPSIS
 .PP
-\fBfsserve tree init [flags]\fP
+\fBfsserve tree checksum [flags]\fP
 
 
 .SH DESCRIPTION
 .PP
-Initializes the content tree db
+Checksums the content tree
 
 
 .SH OPTIONS
 .PP
+\fB--force\fP[=false]
+	recomputes checksums for files with existing checksums
+
+.PP
 \fB-h\fP, \fB--help\fP[=false]
-	help for init
+	help for checksum
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

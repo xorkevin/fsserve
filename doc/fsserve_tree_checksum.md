@@ -1,20 +1,20 @@
-## fsserve tree gc
+## fsserve tree checksum
 
-GCs the content blob dir
+Checksums the content tree
 
 ### Synopsis
 
-GCs the content blob dir
+Checksums the content tree
 
 ```
-fsserve tree gc [flags]
+fsserve tree checksum [flags]
 ```
 
 ### Options
 
 ```
-      --full   perform full gc
-  -h, --help   help for gc
+      --force   recomputes checksums for files with existing checksums
+  -h, --help    help for checksum
 ```
 
 ### Options inherited from parent commands

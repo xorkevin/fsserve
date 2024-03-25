@@ -24,9 +24,5 @@ Manages the server content tree
 ### SEE ALSO
 
 * [fsserve](fsserve.md)	 - A file system http server
-* [fsserve tree add](fsserve_tree_add.md)	 - Adds a content blob and updates the tree
-* [fsserve tree gc](fsserve_tree_gc.md)	 - GCs the content blob dir
-* [fsserve tree init](fsserve_tree_init.md)	 - Initializes the content tree db
-* [fsserve tree rm](fsserve_tree_rm.md)	 - Removes a content blob and updates the tree
-* [fsserve tree sync](fsserve_tree_sync.md)	 - Syncs the content tree db
+* [fsserve tree checksum](fsserve_tree_checksum.md)	 - Checksums the content tree
 
