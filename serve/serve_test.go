@@ -3,6 +3,8 @@ package serve
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
+	"encoding/base64"
 	"io"
 	"io/fs"
 	"net/http"
@@ -14,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/blake2b"
 	"xorkevin.dev/kfs"
 	"xorkevin.dev/klog"
 )
@@ -72,46 +75,78 @@ func TestServer(t *testing.T) {
 			},
 		},
 	)
-	assert.NoError(
-		server.Mount([]Route{
-			{
-				Prefix:       "/static/icon/",
-				Dir:          true,
-				Path:         "static/icon",
-				CacheControl: "public, max-age=31536000, no-cache",
-			},
-			{
-				Prefix:             "/static/",
-				Dir:                true,
-				Path:               "static",
-				Include:            `.{2,}`,
-				Exclude:            `^hideme$`,
-				Encodings:          []Encoding{{Code: "gzip", Match: `\.js$`, Ext: ".gz"}},
-				DefaultContentType: "text/plain",
-				CacheControl:       "public, max-age=31536000, immutable",
-			},
-			{
-				Prefix:       "/manifest.json",
-				Path:         "manifest.json",
-				Encodings:    []Encoding{{Code: "gzip", Ext: ".gz"}},
-				CacheControl: "public, max-age=31536000, no-cache",
-			},
-			{
-				Prefix: "/bogus",
-				Path:   "bogus",
-			},
-			{
-				Prefix: "/subdir",
-				Path:   "subdir",
-			},
-			{
-				Prefix:       "/",
-				Path:         "index.html",
-				Encodings:    []Encoding{{Code: "gzip", Ext: ".gz"}},
-				CacheControl: "public, max-age=31536000, no-cache",
-			},
-		}),
-	)
+	assert.NoError(server.Mount([]Route{
+		{
+			Prefix:       "/static/icon/",
+			Dir:          true,
+			Path:         "static/icon",
+			CacheControl: "public, max-age=31536000, no-cache",
+		},
+		{
+			Prefix:             "/static/",
+			Dir:                true,
+			Path:               "static",
+			Include:            `.{2,}`,
+			Exclude:            `^hideme$`,
+			Encodings:          []Encoding{{Code: "gzip", Match: `\.js$`, Ext: ".gz"}},
+			DefaultContentType: "text/plain",
+			CacheControl:       "public, max-age=31536000, immutable",
+		},
+		{
+			Prefix:       "/manifest.json",
+			Path:         "manifest.json",
+			Encodings:    []Encoding{{Code: "gzip", Ext: ".gz"}},
+			CacheControl: "public, max-age=31536000, no-cache",
+		},
+		{
+			Prefix: "/bogus",
+			Path:   "bogus",
+		},
+		{
+			Prefix: "/subdir",
+			Path:   "subdir",
+		},
+		{
+			Prefix:       "/",
+			Path:         "index.html",
+			Encodings:    []Encoding{{Code: "gzip", Ext: ".gz"}},
+			CacheControl: "public, max-age=31536000, no-cache",
+		},
+	}))
+
+	tree := NewTree(klog.Discard{}, kfs.DirFS(filepath.FromSlash(srcDir)))
+	assert.NoError(tree.Checksum(context.Background(), []Route{
+		{
+			Prefix:       "/static/icon/",
+			Dir:          true,
+			Path:         "static/icon",
+			CacheControl: "public, max-age=31536000, no-cache",
+		},
+		{
+			Prefix:             "/static/",
+			Dir:                true,
+			Path:               "static",
+			Include:            `.{2,}`,
+			Exclude:            `^hideme$`,
+			Encodings:          []Encoding{{Code: "gzip", Match: `\.js$`, Ext: ".gz"}},
+			DefaultContentType: "text/plain",
+			CacheControl:       "public, max-age=31536000, immutable",
+		},
+		{
+			Prefix:       "/manifest.json",
+			Path:         "manifest.json",
+			Encodings:    []Encoding{{Code: "gzip", Ext: ".gz"}},
+			CacheControl: "public, max-age=31536000, no-cache",
+		},
+		// omit bogus error case
+		// omit invalid subdir error case
+		{
+			Prefix:       "/",
+			Path:         "index.html",
+			Encodings:    []Encoding{{Code: "gzip", Ext: ".gz"}},
+			CacheControl: "public, max-age=31536000, no-cache",
+		},
+	}, false))
 
 	for _, tc := range []struct {
 		Name       string
@@ -256,6 +291,7 @@ func TestServer(t *testing.T) {
 				return
 			}
 
+			prevBody := rec.Body.String()
 			if tc.Compressed {
 				assert.Equal("gzip", rec.Result().Header.Get(headerContentEncoding))
 				gr, err := gzip.NewReader(rec.Body)
@@ -269,7 +305,9 @@ func TestServer(t *testing.T) {
 			}
 
 			etag := rec.Result().Header.Get(headerETag)
-			assert.True(etag != "")
+			bodyHash := blake2b.Sum256([]byte(prevBody))
+			expectedTag := calcStrongETag(base64.RawURLEncoding.EncodeToString(bodyHash[:]))
+			assert.Equal(expectedTag, etag)
 			{
 				req := httptest.NewRequest(http.MethodGet, tc.Path, nil)
 				for k, v := range tc.ReqHeaders {

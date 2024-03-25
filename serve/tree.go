@@ -62,7 +62,7 @@ func (t *Tree) Checksum(ctx context.Context, routes []Route, force bool) error {
 			if stat.IsDir() {
 				return kerrors.WithMsg(err, fmt.Sprintf("File %s is a directory", i.Path))
 			}
-			if err := t.hashFileAndStore(ctx, visitedSet, i.Path, force); err != nil {
+			if err := t.checksumFile(ctx, visitedSet, i, "", force); err != nil {
 				return err
 			}
 		}
@@ -194,6 +194,7 @@ func (t *Tree) hashFileAndStore(ctx context.Context, visitedSet map[string]struc
 	t.log.Info(ctx, "Hashed file",
 		klog.AString("path", p),
 	)
+	fmt.Println("hashed", p)
 	return nil
 }
 
@@ -269,7 +270,7 @@ func (t *Tree) hashFile(p string) (_ string, _ string, retErr error) {
 	if tag == "" {
 		return "", "", kerrors.WithMsg(nil, "Unable to read file modification time")
 	}
-	h, err := blake2b.New512(nil)
+	h, err := blake2b.New256(nil)
 	if err != nil {
 		return "", "", kerrors.WithMsg(err, "Failed creating blake2b hash")
 	}

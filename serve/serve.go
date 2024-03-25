@@ -269,6 +269,8 @@ func getFileConfig(
 			log.Err(ctx, err, klog.AString("path", p))
 		} else if tag == currentTag {
 			checksum = hash
+		} else {
+			log.Warn(ctx, "File checksum tags differ", klog.AString("path", p))
 		}
 	}
 
@@ -438,11 +440,6 @@ func NewServer(l klog.Logger, dir fs.FS, config Config) *Server {
 
 func parseRoutes(routes []Route) error {
 	for n, i := range routes {
-		for _, j := range i.Encodings {
-			if j.Code == "" {
-				return kerrors.WithMsg(nil, fmt.Sprintf("Missing encoding code for route %s", i.Prefix))
-			}
-		}
 		if i.Dir {
 			if i.Include != "" {
 				var err error
@@ -458,13 +455,16 @@ func parseRoutes(routes []Route) error {
 					return kerrors.WithMsg(err, fmt.Sprintf("Invalid route include regex for route %s", i.Prefix))
 				}
 			}
-			for m, j := range i.Encodings {
-				if j.Match != "" {
-					var err error
-					i.Encodings[m].match, err = regexp.Compile(j.Match)
-					if err != nil {
-						return kerrors.WithMsg(err, fmt.Sprintf("Invalid encoding match regex for code %s of route %s", j.Code, i.Prefix))
-					}
+		}
+		for m, j := range i.Encodings {
+			if j.Code == "" {
+				return kerrors.WithMsg(nil, fmt.Sprintf("Missing encoding code for route %s", i.Prefix))
+			}
+			if j.Match != "" {
+				var err error
+				i.Encodings[m].match, err = regexp.Compile(j.Match)
+				if err != nil {
+					return kerrors.WithMsg(err, fmt.Sprintf("Invalid encoding match regex for code %s of route %s", j.Code, i.Prefix))
 				}
 			}
 		}
