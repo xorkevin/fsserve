@@ -118,7 +118,7 @@ func (c *Cmd) execServe(cmd *cobra.Command, args []string) {
 	go func() {
 		defer wg.Done()
 		defer cancel()
-		s.Serve(ctx, c.serveFlags.port, opts)
+		s.Serve(ctx, port, opts)
 	}()
 
 	waitForInterrupt(ctx)
