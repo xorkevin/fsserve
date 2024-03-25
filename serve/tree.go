@@ -194,7 +194,6 @@ func (t *Tree) hashFileAndStore(ctx context.Context, visitedSet map[string]struc
 	t.log.Info(ctx, "Hashed file",
 		klog.AString("path", p),
 	)
-	fmt.Println("hashed", p)
 	return nil
 }
 

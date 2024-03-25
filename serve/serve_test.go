@@ -14,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/blake2b"
@@ -46,6 +47,7 @@ func TestServer(t *testing.T) {
 		"manifest.json",
 		"index.html",
 	}
+	lastModifiedAtTimes := map[string]time.Time{}
 	{
 		var filemode fs.FileMode = 0o644
 		for k, v := range srcFiles {
@@ -53,6 +55,9 @@ func TestServer(t *testing.T) {
 			dir := filepath.Dir(name)
 			assert.NoError(os.MkdirAll(dir, 0o777))
 			assert.NoError(os.WriteFile(name, []byte(v), filemode))
+			stat, err := os.Stat(name)
+			assert.NoError(err)
+			lastModifiedAtTimes[k] = stat.ModTime()
 		}
 		gw := gzip.NewWriter(nil)
 		for _, i := range srcGzipFiles {
@@ -61,7 +66,11 @@ func TestServer(t *testing.T) {
 			_, err := gw.Write([]byte(srcFiles[i]))
 			assert.NoError(err)
 			assert.NoError(gw.Close())
-			assert.NoError(os.WriteFile(filepath.FromSlash(path.Join(srcDir, i)+".gz"), b.Bytes(), filemode))
+			name := filepath.FromSlash(path.Join(srcDir, i) + ".gz")
+			assert.NoError(os.WriteFile(name, b.Bytes(), filemode))
+			stat, err := os.Stat(name)
+			assert.NoError(err)
+			lastModifiedAtTimes[i+".gz"] = stat.ModTime()
 		}
 	}
 
@@ -155,6 +164,7 @@ func TestServer(t *testing.T) {
 		Status     int
 		ResHeaders map[string]string
 		Body       string
+		FSPath     string
 		Compressed bool
 	}{
 		{
@@ -168,7 +178,8 @@ func TestServer(t *testing.T) {
 				headerCacheControl: "public, max-age=31536000, no-cache",
 				headerContentType:  "image/png",
 			},
-			Body: `this is a test image file`,
+			Body:   `this is a test image file`,
+			FSPath: "static/icon/someicon.png",
 		},
 		{
 			Name: "file with compressed encoding",
@@ -182,6 +193,7 @@ func TestServer(t *testing.T) {
 				headerContentType:  "text/javascript; charset=utf-8",
 			},
 			Body:       `this is a test js file`,
+			FSPath:     "static/testfile.js.gz",
 			Compressed: true,
 		},
 		{
@@ -195,7 +207,8 @@ func TestServer(t *testing.T) {
 				headerCacheControl: "public, max-age=31536000, immutable",
 				headerContentType:  "text/html; charset=utf-8",
 			},
-			Body: `sample html file`,
+			Body:   `sample html file`,
+			FSPath: "static/test.html",
 		},
 		{
 			Name: "file with exact routing rule match",
@@ -209,6 +222,7 @@ func TestServer(t *testing.T) {
 				headerContentType:  "application/json",
 			},
 			Body:       `this is a test json file`,
+			FSPath:     "manifest.json.gz",
 			Compressed: true,
 		},
 		{
@@ -223,6 +237,7 @@ func TestServer(t *testing.T) {
 				headerContentType:  "text/html; charset=utf-8",
 			},
 			Body:       `this is a test index html file`,
+			FSPath:     "index.html.gz",
 			Compressed: true,
 		},
 		{
@@ -233,7 +248,8 @@ func TestServer(t *testing.T) {
 				headerCacheControl: "public, max-age=31536000, immutable",
 				headerContentType:  "text/plain",
 			},
-			Body: `<!DOCTYPE HTML>`,
+			Body:   `<!DOCTYPE HTML>`,
+			FSPath: "static/fileunknownext",
 		},
 		{
 			Name:   "missing file in directory route",
@@ -291,7 +307,10 @@ func TestServer(t *testing.T) {
 				return
 			}
 
-			prevBody := rec.Body.String()
+			resBody := rec.Body.String()
+			assert.Contains(lastModifiedAtTimes, tc.FSPath)
+			resLastModified, ok := lastModifiedAtTimes[tc.FSPath]
+			assert.True(ok)
 			if tc.Compressed {
 				assert.Equal("gzip", rec.Result().Header.Get(headerContentEncoding))
 				gr, err := gzip.NewReader(rec.Body)
@@ -305,15 +324,35 @@ func TestServer(t *testing.T) {
 			}
 
 			etag := rec.Result().Header.Get(headerETag)
-			bodyHash := blake2b.Sum256([]byte(prevBody))
+			bodyHash := blake2b.Sum256([]byte(resBody))
 			expectedTag := calcStrongETag(base64.RawURLEncoding.EncodeToString(bodyHash[:]))
 			assert.Equal(expectedTag, etag)
 			{
+				// strong etag
 				req := httptest.NewRequest(http.MethodGet, tc.Path, nil)
 				for k, v := range tc.ReqHeaders {
 					req.Header.Set(k, v)
 				}
 				req.Header.Set(headerIfNoneMatch, etag)
+				rec := httptest.NewRecorder()
+				server.ServeHTTP(rec, req)
+
+				assert.Equal(http.StatusNotModified, rec.Code)
+				for _, i := range []string{
+					headerContentEncoding,
+					headerContentType,
+				} {
+					assert.Equal("", rec.Result().Header.Get(i))
+				}
+			}
+			{
+				// weak etag
+				weakETag := calcWeakETag(fileSizeModTimeToTag(resLastModified, uint64(len(resBody))))
+				req := httptest.NewRequest(http.MethodGet, tc.Path, nil)
+				for k, v := range tc.ReqHeaders {
+					req.Header.Set(k, v)
+				}
+				req.Header.Set(headerIfNoneMatch, weakETag)
 				rec := httptest.NewRecorder()
 				server.ServeHTTP(rec, req)
 

@@ -233,14 +233,18 @@ func detectContentType(name string, fallbackContentType string) string {
 	return defaultContentType
 }
 
-func statToTag(stat fs.FileInfo) string {
-	if stat.ModTime().IsZero() {
+func fileSizeModTimeToTag(modtime time.Time, size uint64) string {
+	if modtime.IsZero() {
 		return ""
 	}
 	var etagbytes [16]byte
-	binary.BigEndian.PutUint64(etagbytes[:8], uint64(stat.ModTime().UnixMilli()))
-	binary.BigEndian.PutUint64(etagbytes[8:], uint64(stat.Size()))
+	binary.BigEndian.PutUint64(etagbytes[:8], uint64(modtime.UnixMilli()))
+	binary.BigEndian.PutUint64(etagbytes[8:], size)
 	return base64.RawURLEncoding.EncodeToString(etagbytes[:])
+}
+
+func statToTag(stat fs.FileInfo) string {
+	return fileSizeModTimeToTag(stat.ModTime(), uint64(stat.Size()))
 }
 
 func getFileConfig(
