@@ -47,7 +47,7 @@ func (c *Cmd) Execute() {
 		PersistentPreRun:  c.initConfig,
 		DisableAutoGenTag: true,
 	}
-	rootCmd.PersistentFlags().StringVar(&c.rootFlags.cfgFile, "config", "", "config file (default is .fsserve.json)")
+	rootCmd.PersistentFlags().StringVar(&c.rootFlags.cfgFile, "config", "", "config file (default is fsserve.json)")
 	rootCmd.PersistentFlags().StringVar(&c.rootFlags.logLevel, "log-level", "info", "log level")
 	rootCmd.PersistentFlags().BoolVar(&c.rootFlags.logPlain, "log-plain", false, "output plain text logs")
 
