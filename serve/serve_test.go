@@ -324,7 +324,7 @@ func TestServer(t *testing.T) {
 			}
 
 			etag := rec.Result().Header.Get(headerETag)
-			bodyHash := blake2b.Sum256([]byte(resBody))
+			bodyHash := blake2b.Sum512([]byte(resBody))
 			expectedTag := calcStrongETag(base64.RawURLEncoding.EncodeToString(bodyHash[:]))
 			assert.Equal(expectedTag, etag)
 			{

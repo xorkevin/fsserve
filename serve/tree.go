@@ -269,7 +269,7 @@ func (t *Tree) hashFile(p string) (_ string, _ string, retErr error) {
 	if tag == "" {
 		return "", "", kerrors.WithMsg(nil, "Unable to read file modification time")
 	}
-	h, err := blake2b.New256(nil)
+	h, err := blake2b.New512(nil)
 	if err != nil {
 		return "", "", kerrors.WithMsg(err, "Failed creating blake2b hash")
 	}
