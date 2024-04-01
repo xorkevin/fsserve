@@ -579,8 +579,7 @@ func (s Snowflake) Base64() string {
 // NewRandSnowflake returns a new [Snowflake] with random bytes for the seq
 func NewRandSnowflake() (Snowflake, error) {
 	var u [3]byte
-	_, err := rand.Read(u[:])
-	if err != nil {
+	if _, err := rand.Read(u[:]); err != nil {
 		return 0, kerrors.WithMsg(err, "Failed reading crypto/rand")
 	}
 	k := uint32(u[0])
