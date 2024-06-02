@@ -113,6 +113,7 @@ type (
 		CacheControl       string     `mapstructure:"cachecontrol"`
 		DisableXAttr       bool       `mapstructure:"disable_xattr"`
 		XAttrChecksum      string     `mapstructure:"xattr_checksum"`
+		StrongETagOverride bool       `mapstructure:"strong_etag_override"`
 		include            *regexp.Regexp
 		exclude            *regexp.Regexp
 	}
@@ -266,7 +267,9 @@ func getFileConfig(
 
 	currentTag := statToTag(stat)
 	var checksum string
-	if !route.DisableXAttr {
+	if route.StrongETagOverride {
+		checksum = currentTag
+	} else if !route.DisableXAttr {
 		if fullFilePath, err := kfs.FullFilePath(dir, p); err != nil {
 			log.Err(ctx, kerrors.WithMsg(err, "Failed to get full file path for file"),
 				klog.AString("path", p),
