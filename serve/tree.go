@@ -40,6 +40,10 @@ func (t *Tree) Checksum(ctx context.Context, routes []Route, force bool) error {
 	visitedSet := map[string]struct{}{}
 
 	for _, i := range routes {
+		if i.DisableXAttr {
+			continue
+		}
+
 		t.log.Info(context.Background(), "Checksum route",
 			klog.AString("route.prefix", i.Prefix),
 			klog.AString("route.fspath", i.Path),
@@ -107,7 +111,12 @@ func (t *Tree) checksumDir(ctx context.Context, visitedSet map[string]struct{}, 
 func (t *Tree) checksumFile(ctx context.Context, visitedSet map[string]struct{}, route Route, name string, force bool) error {
 	p := path.Join(route.Path, name)
 
-	if err := t.hashFileAndStore(ctx, visitedSet, p, force); err != nil {
+	xattrChecksum := route.XAttrChecksum
+	if xattrChecksum == "" {
+		xattrChecksum = defaultXAttrChecksum
+	}
+
+	if err := t.hashFileAndStore(ctx, xattrChecksum, visitedSet, p, force); err != nil {
 		return err
 	}
 
@@ -128,7 +137,7 @@ func (t *Tree) checksumFile(ctx context.Context, visitedSet map[string]struct{},
 		if stat.IsDir() {
 			continue
 		}
-		if err := t.hashFileAndStore(ctx, visitedSet, alt, force); err != nil {
+		if err := t.hashFileAndStore(ctx, xattrChecksum, visitedSet, alt, force); err != nil {
 			return err
 		}
 	}
@@ -136,7 +145,7 @@ func (t *Tree) checksumFile(ctx context.Context, visitedSet map[string]struct{},
 	return nil
 }
 
-func (t *Tree) hashFileAndStore(ctx context.Context, visitedSet map[string]struct{}, p string, force bool) error {
+func (t *Tree) hashFileAndStore(ctx context.Context, xattrChecksum string, visitedSet map[string]struct{}, p string, force bool) error {
 	if _, ok := visitedSet[p]; ok {
 		t.log.Debug(ctx, "Skipping rehashing file",
 			klog.AString("path", p),
@@ -156,7 +165,7 @@ func (t *Tree) hashFileAndStore(ctx context.Context, visitedSet map[string]struc
 	if currentTag == "" {
 		return kerrors.WithMsg(nil, fmt.Sprintf("Unable to read modification time of file %s", p))
 	}
-	existingHash, existingTag, err := readChecksumXAttr(fullFilePath)
+	existingHash, existingTag, err := readChecksumXAttr(xattrChecksum, fullFilePath)
 	if err != nil {
 		if errors.Is(err, ErrMalformedChecksum) {
 			t.log.Warn(ctx, "Found malformed checksum on file",
@@ -185,7 +194,7 @@ func (t *Tree) hashFileAndStore(ctx context.Context, visitedSet map[string]struc
 			)
 		}
 
-		if err := setChecksumXAttr(fullFilePath, hash, tag); err != nil {
+		if err := setChecksumXAttr(xattrChecksum, fullFilePath, hash, tag); err != nil {
 			return err
 		}
 	}
@@ -198,13 +207,13 @@ func (t *Tree) hashFileAndStore(ctx context.Context, visitedSet map[string]struc
 }
 
 const (
-	xattrChecksum     = "user.fsserve.checksum"
-	checksumSeparator = ":"
-	checksumVersion   = "v1"
-	checksumPrefix    = checksumVersion + checksumSeparator
+	defaultXAttrChecksum = "user.fsserve.checksum"
+	checksumSeparator    = ":"
+	checksumVersion      = "v1"
+	checksumPrefix       = checksumVersion + checksumSeparator
 )
 
-func readChecksumXAttr(fullFilePath string) (string, string, error) {
+func readChecksumXAttr(xattrChecksum, fullFilePath string) (string, string, error) {
 	var buf [128]byte
 	val, err := readXAttr(fullFilePath, xattrChecksum, buf[:])
 	if err != nil {
@@ -224,7 +233,7 @@ func readChecksumXAttr(fullFilePath string) (string, string, error) {
 	return hash, tag, nil
 }
 
-func setChecksumXAttr(fullFilePath string, hash, tag string) error {
+func setChecksumXAttr(xattrChecksum, fullFilePath string, hash, tag string) error {
 	return setXAttr(fullFilePath, xattrChecksum, checksumPrefix+hash+":"+tag)
 }
 

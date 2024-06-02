@@ -111,6 +111,8 @@ type (
 		Encodings          []Encoding `mapstructure:"encodings"`
 		DefaultContentType string     `mapstructure:"default_content_type"`
 		CacheControl       string     `mapstructure:"cachecontrol"`
+		DisableXAttr       bool       `mapstructure:"disable_xattr"`
+		XAttrChecksum      string     `mapstructure:"xattr_checksum"`
 		include            *regexp.Regexp
 		exclude            *regexp.Regexp
 	}
@@ -264,17 +266,23 @@ func getFileConfig(
 
 	currentTag := statToTag(stat)
 	var checksum string
-	if fullFilePath, err := kfs.FullFilePath(dir, p); err != nil {
-		log.Err(ctx, kerrors.WithMsg(err, "Failed to get full file path for file"),
-			klog.AString("path", p),
-		)
-	} else {
-		if hash, tag, err := readChecksumXAttr(fullFilePath); err != nil {
-			log.Err(ctx, err, klog.AString("path", p))
-		} else if tag == currentTag {
-			checksum = hash
+	if !route.DisableXAttr {
+		if fullFilePath, err := kfs.FullFilePath(dir, p); err != nil {
+			log.Err(ctx, kerrors.WithMsg(err, "Failed to get full file path for file"),
+				klog.AString("path", p),
+			)
 		} else {
-			log.Warn(ctx, "File checksum tags differ", klog.AString("path", p))
+			xattrChecksum := route.XAttrChecksum
+			if xattrChecksum == "" {
+				xattrChecksum = defaultXAttrChecksum
+			}
+			if hash, tag, err := readChecksumXAttr(xattrChecksum, fullFilePath); err != nil {
+				log.Err(ctx, err, klog.AString("path", p))
+			} else if tag == currentTag {
+				checksum = hash
+			} else {
+				log.Warn(ctx, "File checksum tags differ", klog.AString("path", p))
+			}
 		}
 	}
 
