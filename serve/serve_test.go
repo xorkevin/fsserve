@@ -123,6 +123,9 @@ func TestServer(t *testing.T) {
 		},
 	}))
 
+	indexFileName := filepath.FromSlash(path.Join(srcDir, "index.html"))
+	indexFileStat, err := os.Stat(indexFileName)
+	assert.NoError(err)
 	tree := NewTree(klog.Discard{}, kfs.DirFS(filepath.FromSlash(srcDir)))
 	assert.NoError(tree.Checksum(context.Background(), []Route{
 		{
@@ -156,6 +159,13 @@ func TestServer(t *testing.T) {
 			CacheControl: "public, max-age=31536000, no-cache",
 		},
 	}, false))
+
+	{
+		// Checksum does not change mtime
+		stat, err := os.Stat(indexFileName)
+		assert.NoError(err)
+		assert.Equal(indexFileStat.ModTime().UnixNano(), stat.ModTime().UnixNano())
+	}
 
 	for _, tc := range []struct {
 		Name       string
