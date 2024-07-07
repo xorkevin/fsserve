@@ -473,10 +473,8 @@ func serveDir(
 	for _, i := range entries {
 		fname := i.Name()
 		isDir := i.IsDir()
-		if !isDir {
-			if !routeMatchPath(route, path.Join(dirName, fname)) {
-				continue
-			}
+		if !routeMatchPath(route, path.Join(dirName, fname)) {
+			continue
 		}
 		listing = append(listing, resDirEntry{
 			Name: fname,
