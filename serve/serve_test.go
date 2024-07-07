@@ -18,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/blake2b"
+	"xorkevin.dev/fsserve/util/kjson"
 	"xorkevin.dev/kfs"
 	"xorkevin.dev/klog"
 )
@@ -31,15 +32,17 @@ func TestServer(t *testing.T) {
 	srcDir := path.Join(rootDir, "src")
 
 	srcFiles := map[string]string{
-		"static/icon/someicon.png": `this is a test image file`,
-		"static/testfile.js":       `this is a test js file`,
-		"static/fileunknownext":    `<!DOCTYPE HTML>`,
-		"static/test.html":         `sample html file`,
-		"static/hideme":            `should be hidden`,
-		"static/a":                 `also should be hidden`,
-		"manifest.json":            `this is a test json file`,
-		"index.html":               `this is a test index html file`,
-		"subdir/file.txt":          `placeholder file`,
+		"static/icon/someicon.png":    `this is a test image file`,
+		"static/testfile.js":          `this is a test js file`,
+		"static/fileunknownext":       `<!DOCTYPE HTML>`,
+		"static/test.html":            `sample html file`,
+		"static/hideme":               `should be hidden`,
+		"static/a":                    `also should be hidden`,
+		"manifest.json":               `this is a test json file`,
+		"index.html":                  `this is a test index html file`,
+		"subdir/file.txt":             `placeholder file`,
+		"listing/file.txt":            `placeholder file`,
+		"listing/listingdir/file.txt": `placeholder file`,
 	}
 	srcGzipFiles := []string{
 		"static/testfile.js",
@@ -114,6 +117,12 @@ func TestServer(t *testing.T) {
 		{
 			Prefix: "/subdir",
 			Path:   "subdir",
+		},
+		{
+			Prefix:  "/listing",
+			Dir:     true,
+			Path:    "listing",
+			DirList: true,
 		},
 		{
 			Prefix:       "/",
@@ -396,6 +405,25 @@ func TestServer(t *testing.T) {
 			server.ServeHTTP(rec, req)
 			assert.Equal(http.StatusMethodNotAllowed, rec.Code)
 		}
+	})
+
+	t.Run("serves directory listings", func(t *testing.T) {
+		t.Parallel()
+
+		assert := require.New(t)
+
+		req := httptest.NewRequest(http.MethodGet, "/listing?dir=t", nil)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		assert.Equal(http.StatusOK, rec.Code)
+		var listing resDirListing
+		assert.NoError(kjson.Unmarshal(rec.Body.Bytes(), &listing))
+		assert.Equal(resDirListing{
+			Entries: []resDirEntry{
+				{Name: "file.txt"},
+				{Name: "listingdir", Dir: true},
+			},
+		}, listing)
 	})
 }
 

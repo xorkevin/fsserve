@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"xorkevin.dev/fsserve/util/kjson"
 	"xorkevin.dev/kerrors"
 	"xorkevin.dev/kfs"
 	"xorkevin.dev/klog"
@@ -114,6 +115,7 @@ type (
 		DisableXAttr       bool       `mapstructure:"disable_xattr"`
 		XAttrChecksum      string     `mapstructure:"xattr_checksum"`
 		StrongETagOverride bool       `mapstructure:"strong_etag_override"`
+		DirList            bool       `mapstructure:"dir_list"`
 		include            *regexp.Regexp
 		exclude            *regexp.Regexp
 	}
@@ -416,6 +418,86 @@ func serveFile(
 	sendFile(ctx, log, dir, w, r, *cfg)
 }
 
+type (
+	resDirEntry struct {
+		Name string `json:"name"`
+		Dir  bool   `json:"dir,omitempty"`
+	}
+
+	resDirListing struct {
+		Entries []resDirEntry `json:"entries"`
+	}
+)
+
+func serveDir(
+	log *klog.LevelLogger,
+	dir fs.FS,
+	w http.ResponseWriter,
+	r *http.Request,
+	dirName string,
+	route Route,
+) {
+	ctx := r.Context()
+
+	if !route.DirList {
+		writeError(ctx, log, w, kerrors.WithKind(nil, ErrInvalidReq, "Dir listing not supported"))
+		return
+	}
+
+	if dirName == "" {
+		dirName = "."
+	}
+
+	stat, err := fs.Stat(dir, dirName)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			writeError(ctx, log, w, kerrors.WithKind(err, ErrNotFound, fmt.Sprintf("Dir not found: %s", dirName)))
+			return
+		}
+		writeError(ctx, log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to stat dir %s", dirName)))
+		return
+	}
+	if !stat.IsDir() {
+		writeError(ctx, log, w, kerrors.WithKind(nil, ErrInvalidReq, fmt.Sprintf("Path %s is not a directory", dirName)))
+		return
+	}
+
+	entries, err := fs.ReadDir(dir, dirName)
+	if err != nil {
+		fmt.Println("err", err)
+		writeError(ctx, log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to read dir: %s", dirName)))
+		return
+	}
+
+	var listing []resDirEntry
+	for _, i := range entries {
+		fname := i.Name()
+		isDir := i.IsDir()
+		if !isDir {
+			if !routeMatchPath(route, path.Join(dirName, fname)) {
+				continue
+			}
+		}
+		listing = append(listing, resDirEntry{
+			Name: fname,
+			Dir:  isDir,
+		})
+	}
+
+	b, err := kjson.Marshal(resDirListing{Entries: listing})
+	if err != nil {
+		writeError(ctx, log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed to encode dir listing: %s", dirName)))
+		return
+	}
+
+	w.Header().Set(headerContentType, "application/json")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(b); err != nil {
+		writeError(ctx, log, w, kerrors.WithMsg(err, fmt.Sprintf("Failed writing http res for dir: %s", dirName)))
+		return
+	}
+}
+
 func routeMatchPath(route Route, name string) bool {
 	if route.include != nil {
 		if !route.include.MatchString(name) {
@@ -431,6 +513,11 @@ func routeMatchPath(route Route, name string) bool {
 }
 
 func (s *serverSubdir) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("dir") == "t" {
+		serveDir(s.log, s.dir, w, r, r.URL.Path, s.route)
+		return
+	}
+
 	if !routeMatchPath(s.route, r.URL.Path) {
 		writeError(r.Context(), s.log, w, kerrors.WithKind(nil, ErrNotFound, fmt.Sprintf("File is not included: %s", r.URL.Path)))
 		return
