@@ -97,7 +97,7 @@ func (c *Cmd) initConfig(cmd *cobra.Command, args []string) {
 	var handler *klog.SlogHandler
 	if c.rootFlags.logPlain {
 		handler = klog.NewTextSlogHandler(logWriter)
-		handler.FieldTimeInfo = ""
+		handler.FieldTime = ""
 		handler.FieldCaller = ""
 		handler.FieldMod = ""
 	} else {
