@@ -405,6 +405,11 @@ func serveFile(
 ) {
 	ctx := r.Context()
 
+	if name == "" {
+		writeError(ctx, log, w, kerrors.WithKind(nil, ErrInvalidReq, fmt.Sprintf("File %s is a directory", name)))
+		return
+	}
+
 	cfg, err := getFileConfig(ctx, log, dir, r.Header, name, route)
 	if err != nil {
 		writeError(ctx, log, w, err)
